@@ -432,6 +432,7 @@ static void run_all_tests(void) {
   test_seek(0);
   test_read_id(0);
   print_results();
+  press_any_key(1);
 }
 
 static void menu_print(void) {
