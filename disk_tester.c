@@ -5,15 +5,14 @@
  * FDC.
  *
  * Ports:
- *   0x1FFD  +3 system control (bit 3 controls motor), also memory control and
- * is write-only 0x2FFD  FDC Main Status Register (MSR), read-only 0x3FFD  FDC
- * Data Register, read/write
+ *    0x1FFD  +3 system control (bit 3 controls motor), also memory control and
+ * is write-only
+ *    0x2FFD  FDC Main Status Register (MSR), read-only
+ *    0x3FFD  FDC Data Register, read/write
  *
  * Notes:
  * - Port 0x1FFD also controls memory/ROM paging. Only use bit 3 to avoid
- * messing paging up. The SYS_1FFD_SHADOW variable is used to keep track of the
- * current value of 0x1FFD so we can preserve the paging bits when toggling the
- * motor.
+ * messing paging up.
  *
  * Build examples:
  *   Bootable +3 disc (produces .dsk):
@@ -44,7 +43,7 @@
 
 #define FDC_DRIVE 0 /* internal drive is drive 0 */
 
-#define SYS_1FFD_SHADOW (*(volatile unsigned char*)0x5B67)
+#define BANK_678 (*(volatile unsigned char*)0x5B67)
 /* Test results storage */
 typedef struct {
   unsigned char motor_test_pass;
@@ -63,14 +62,20 @@ static TestResults results;
 static unsigned char fdc_msr(void) { return inp(FDC_MSR_PORT); }
 
 static void plus3_motor(unsigned char on) {
-  unsigned char v = SYS_1FFD_SHADOW; /* preserve paging bits */
+  unsigned char v;
+  __asm__("di");
+  v = BANK_678;
   if (on)
     v |= 0x08; /* set bit 3 */
   else
     v &= (unsigned char)~0x08; /* clear bit 3 */
 
-  SYS_1FFD_SHADOW = v; /* keep OS shadow in sync */
-  outp(0x1FFD, v);     /* apply */
+  BANK_678 = v;
+  outp(PLUS3_SYS_PORT, v); /* apply */
+  if (on) {
+    for (int i = 0; i < 30000; i++);
+  }
+  __asm__("ei");
 }
 /* Wait until RQM set and DIO matches desired direction.
    want_dio = 0 for CPU->FDC (write), 1 for FDC->CPU (read). */
@@ -189,7 +194,6 @@ static void test_motor(int interactive) {
   printf("\n*** TEST: Motor Control (0x1FFD bit 3) ***\n");
   printf("Turning motor ON...\n");
   plus3_motor(1);
-  for (i = 0; i < 30000; i++);
 
   printf("FDC MSR: 0x%02X\n", fdc_msr());
   printf(
@@ -199,7 +203,6 @@ static void test_motor(int interactive) {
   press_any_key(interactive);
   printf("Turning motor OFF...\n");
   plus3_motor(0);
-  for (i = 0; i < 8000; i++);
   press_any_key(interactive);
 }
 static void test_sense_drive(int interactive) {
@@ -264,7 +267,6 @@ static void test_sense_drive(int interactive) {
   plus3_motor(0);
   press_any_key(interactive);
 }
-
 
 static void test_recalibrate(int interactive) {
   unsigned char st0 = 0, pcn = 0;
@@ -346,7 +348,8 @@ static void test_seek_interactive(void) {
         target = target > 0 ? target - 1 : 0;
         break;
       case 'K':
-        target = target < 39 ? target + 1 : 39;  // +3 has 40 cylinders numbered 0-39
+        target =
+            target < 39 ? target + 1 : 39;  // +3 has 40 cylinders numbered 0-39
         break;
       case 'Q':
         plus3_motor(0);
