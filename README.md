@@ -30,7 +30,7 @@ This project targets the **ZX Spectrum +3** internal floppy system:
 
 ### Build script
 
-The repo includes `build.sh`, which builds into `./out` using `zcc +zx` and links `-lndos`:
+The repo includes `build.sh`, which builds into `./out` using `zcc +zx` with `-clib=new`:
 
 ```sh
 ./build.sh
@@ -40,7 +40,16 @@ Equivalent manual build:
 
 ```sh
 mkdir -p out
-zcc +zx -vn -create-app -lndos disk_tester.c -o ./out/disk_tester
+zcc +zx -vn -create-app disk_tester.c -o ./out/disk_tester
+
+# newlib build (current project setting)
+zcc +zx -vn -clib=new -create-app disk_tester.c intstate.asm -o ./out/disk_tester
+```
+
+Deploy wrapper (build + artifact check):
+
+```sh
+./deploy.sh
 ```
 
 ### Output

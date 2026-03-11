@@ -1,65 +1,90 @@
 SECTION code_user
 
-PUBLIC _motor_on_asm
-PUBLIC _motor_off_asm
+PUBLIC _set_motor_on
+PUBLIC _set_motor_off
+PUBLIC _inportb
+PUBLIC _outportb
 
 defc BANK678 = $5B67
 
-; DD_L_ON_MOTOR  (user-space safe version)
-;
-; The ROM version references tm_mtron ($E428), tm_mtroff ($E429) and
-; timeout ($E600) which are +3DOS internal variables in page 7 of RAM.
-; Page 7 is only mapped at $C000-$FFFF when the DOS ROM itself executes.
-; In a user program a different RAM page is there; those writes corrupt
-; program memory and cause a crash that surfaces when interrupts are
-; later re-enabled (INTRQ floods the stack via the IM1 handler).
-;
-; Spinup delay is handled by delay_ms(500) on the C side.
-; The motor-off ticker is not needed: user code turns the motor off
-; explicitly, and the ticker variable is inaccessible anyway.
-;
-; Interrupt state is preserved exactly as in the ROM's set_bank_to_a:
-; LD A,R copies IFF2 into P/V; the following LD A,B (reg-to-reg) does
-; NOT alter flags, so P/V survives to the RET PO / EI test.
+SECTION bss_user
+paging_value:           defs 1  ; Paging bits captured at first call
+paging_initialized:     defs 1  ; Flag: 0 = not yet read, 1 = ready
 
-_motor_on_asm:
-        push    bc
-        push    af
-        ld      a,(BANK678)
-        bit     3,a
-        jr      nz,motor_on_exit    ; motor already on, nothing to do
-        or      $08
-        call    set_bank_to_a       ; set motor bit and write port
-motor_on_exit:
-        pop     af
-        pop     bc
+SECTION code_user
+
+; void set_motor_on(void)
+; Enable motor (set bit 3), preserving other paging bits.
+
+_set_motor_on:
+        call    init_paging
+        ld      a,(paging_value)
+        or      $08                 ; set bit 3 (motor on)
+        call    write_1ffd
+        ld      (paging_value),a
         ret
 
-; DD_L_OFF_MOTOR  (user-space safe version)
+; void set_motor_off(void)
+; Disable motor (clear bit 3), preserving other paging bits.
 
-_motor_off_asm:
-        push    bc
-        push    af
-        ld      a,(BANK678)
-        and     $F7                 ; clear motor bit
-        call    set_bank_to_a       ; clear motor bit and write port
-        pop     af
-        pop     bc
+_set_motor_off:
+        call    init_paging
+        ld      a,(paging_value)
+        and     $F7                 ; clear bit 3 (motor off)
+        call    write_1ffd
+        ld      (paging_value),a
         ret
 
-; Write A to BANK678 shadow and port $1FFD with interrupt-state preservation.
-; Identical logic to the ROM's set_bank_to_a routine.
+; init_paging: capture paging bits once from BANK678.
+init_paging:
+        ld      a,(paging_initialized)
+        or      a
+        ret     nz                  ; already initialized
+        ld      a,(BANK678)
+        ld      (paging_value),a
+        ld      a,1
+        ld      (paging_initialized),a
+        ret
 
-set_bank_to_a:
+; write_1ffd: write A to port $1FFD and both shadows.
+; Preserves interrupt state: if IFFs were off on entry, they stay off on return.
+
+write_1ffd:
         push    bc
-        ld      b,a                 ; save value; LD r,r does NOT alter flags
-        ld      a,r                 ; P/V = IFF2 (NMOS Z80)
-        ld      a,b                 ; restore value; flags unchanged
+        ld      d,a                 ; save value in D
+        ld      a,i                 ; capture IFF2 into P/V flag
+        push    af
         ld      bc,$1FFD
         di
-        ld      (BANK678),a         ; update shadow before port write
+        ld      a,d                 ; restore value
+        ld      (BANK678),a         ; update ROM shadow
         out     (c),a               ; write port $1FFD
-        pop     bc
-        ret     po                  ; P/V=0: ints were off, return without EI
+        pop     af
+        jp      po,write_1ffd_no_ei ; P/V=0 means interrupts were off
         ei
+write_1ffd_no_ei:
+        pop     bc
+        ret
+
+; unsigned char inportb(unsigned short port)
+; __smallc call convention: arg word at sp+2
+_inportb:
+        pop     de                  ; return address
+        pop     bc                  ; port
+        in      l,(c)
+        ld      h,0
+        push    bc
+        push    de
+        ret
+
+; void outportb(unsigned short port, unsigned char value)
+; __smallc call convention: value word at sp+2, port word at sp+4
+_outportb:
+        pop     de                  ; return address
+        pop     hl                  ; value in L
+        pop     bc                  ; port
+        out     (c),l
+        push    bc
+        push    hl
+        push    de
         ret

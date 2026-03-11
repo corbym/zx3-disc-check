@@ -16,11 +16,11 @@
  *
  * Build examples:
  *   Bootable +3 disc (produces .dsk):
- *     zcc +zx -subtype=plus3 -create-app -lndos disk_tester.c -o
+ *     zcc +zx -clib=new -subtype=plus3 -create-app disk_tester.c -o
  * out/disk_tester
  *
  *   Tape (produces .tap):
- *     zcc +zx -create-app disk_tester.c -o out/disk_tester
+ *     zcc +zx -clib=new -create-app disk_tester.c -o out/disk_tester
  */
 
 #include "disk_tester.h"
@@ -29,16 +29,21 @@
 #include <stdio.h>
 #include <string.h>
 
+extern unsigned char inportb(unsigned short port);
+extern void outportb(unsigned short port, unsigned char value);
+extern void set_motor_on(void);
+extern void set_motor_off(void);
+
 #define LOOPS_PER_MS 250U
 
-/* Busy-wait delay. The #asm nop prevents sccz80 eliminating the empty loop. */
+static volatile unsigned int delay_spin_sink;
+
+/* Busy-wait delay without classic inline asm, suitable for newlib builds. */
 static void delay_ms(unsigned int ms) {
   unsigned int i, j;
   for (i = 0; i < ms; i++) {
     for (j = 0; j < LOOPS_PER_MS; j++) {
-#asm
-      nop
-#endasm
+      delay_spin_sink++;
     }
   }
 }
@@ -73,10 +78,9 @@ static TestResults results;
 /* Low-level I/O                                                              */
 /* -------------------------------------------------------------------------- */
 
-extern void motor_on_asm(void);
-extern void motor_off_asm(void);
 
-static unsigned char fdc_msr(void) { return inp(FDC_MSR_PORT); }
+
+static unsigned char fdc_msr(void) { return inportb(FDC_MSR_PORT); }
 
 /* Wait until RQM set and DIO matches desired direction.
    want_dio = 0 for CPU->FDC (write), 1 for FDC->CPU (read). */
@@ -92,38 +96,28 @@ static unsigned char fdc_wait_rqm(unsigned char want_dio,
 
 static unsigned char fdc_write(unsigned char b) {
   if (!fdc_wait_rqm(0, 60000)) return 0;
-  outp(FDC_DATA_PORT, b);
+  outportb(FDC_DATA_PORT, b);
   return 1;
 }
 
 static unsigned char fdc_read(unsigned char* out) {
   if (!fdc_wait_rqm(1, 60000)) return 0;
-  *out = inp(FDC_DATA_PORT);
+  *out = inportb(FDC_DATA_PORT);
   return 1;
 }
 
 /*
- * fdc_drain_interrupts()
- *
- * The uPD765A asserts INTRQ whenever a drive's READY state changes (motor
- * on -> ready, motor off -> not-ready) as well as after seek/recalibrate.
- * In IM1 mode the Z80 re-checks INT after every instruction.  If INTRQ is
- * left asserted and interrupts are enabled, the IM1 handler fires in a
- * tight loop, the stack overflows within milliseconds, and the machine
- * resets.
- *
- * Sense Interrupt Status (0x08) reads and clears one pending interrupt.
- * If ST0 IC bits = 10b (0x80), no interrupt is pending and we stop.
- * The FDC can queue at most 4 interrupts (one per drive), so 4 iterations
- * is sufficient to guarantee INTRQ is de-asserted.
+ * Consume up to 4 pending uPD765 interrupts using Sense Interrupt Status.
+ * This prevents an interrupt storm after motor-ready transitions.
  */
 static void fdc_drain_interrupts(void) {
   unsigned char st0, pcn, i;
+
   for (i = 0; i < 4; i++) {
-    if (!fdc_write(0x08)) break; /* Sense Interrupt Status */
+    if (!fdc_write(0x08)) break;
     if (!fdc_read(&st0)) break;
-    if ((st0 & 0xC0) == 0x80) break; /* IC=10b: no pending interrupt */
-    if (!fdc_read(&pcn)) break;      /* consume PCN to complete read */
+    if ((st0 & 0xC0) == 0x80) break;
+    if (!fdc_read(&pcn)) break;
   }
 }
 
@@ -133,9 +127,9 @@ static void fdc_drain_interrupts(void) {
  *
  */
 unsigned char plus3_motor_on(void) {
-  motor_on_asm();
+  set_motor_on();
   delay_ms(500);          /* wait for drive to reach operating speed */
-  fdc_drain_interrupts(); /* clear drive-ready INTRQ before re-enabling ints */
+  fdc_drain_interrupts(); /* clear ready-change interrupt(s) */
   return 0;
 }
 
@@ -145,8 +139,8 @@ unsigned char plus3_motor_on(void) {
  * Only call this when no FDC command is in progress.
  */
 void plus3_motor_off(void) {
-  motor_off_asm();
-  fdc_drain_interrupts(); 
+  set_motor_off();
+  fdc_drain_interrupts(); /* clear not-ready interrupt(s) */
 }
 
 /* -------------------------------------------------------------------------- */
@@ -248,9 +242,11 @@ static unsigned char wait_seek_complete(unsigned char drive,
 void press_any_key(int interactive) {
   if (interactive == 1) {
     printf("Press any key to continue...\n");
-    getchar(); /* pause for user to inspect results */
+    fflush(stdout);
+    getchar();
   }
 }
+
 /* -------------------------------------------------------------------------- */
 /* Tests                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -262,12 +258,15 @@ static void test_motor(int interactive) {
   printf("Turning motor ON...\n");
   plus3_motor_on();
 
-  printf("FDC MSR: 0x%02X\n", fdc_msr());
-  results.motor_test_pass = 1;
-  press_any_key(interactive);
+  // printf("FDC MSR: 0x%02X\n", fdc_msr());
+  // results.motor_test_pass = 1;
+  // press_any_key(interactive);
   printf("Turning motor OFF...\n");
   plus3_motor_off();
-  press_any_key(interactive);
+  printf("DEBUG: after plus3_motor_off\n");
+  fflush(stdout);
+  delay_ms(1000);
+  // press_any_key(interactive);
 }
 static void test_sense_drive(int interactive) {
   unsigned char st3 = 0;
@@ -314,13 +313,7 @@ static void test_sense_drive(int interactive) {
         "error)\n");
   }
 
-  /*
-   * PASS/FAIL logic:
-   * - We PASS if Read ID works, because that proves the disk path works in both
-   * real hardware and ZEsarUX.
-   * - If Read ID fails, we FAIL even if ST3 says Ready (common emulator
-   * behaviour).
-   */
+
   results.sense_drive_pass = rid_ok ? 1 : 0;
   printf("Overall: %s\n", results.sense_drive_pass ? "PASS" : "FAIL");
 
@@ -456,6 +449,7 @@ static void test_read_id(int interactive) {
   printf("  %s\n", ok ? "PASS" : "FAIL");
 
   plus3_motor_off();
+  
   press_any_key(interactive);
 }
 
