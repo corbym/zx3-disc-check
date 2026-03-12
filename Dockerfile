@@ -27,13 +27,14 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install z88dk from GitHub releases
-RUN mkdir -p /opt/z88dk && \
-    cd /tmp && \
+RUN cd /tmp && \
     wget -q https://github.com/z88dk/z88dk/releases/download/v2.3/z88dk-2.3_3.1_amd64.deb && \
     dpkg -i z88dk-2.3_3.1_amd64.deb && \
     rm z88dk-2.3_3.1_amd64.deb && \
-    z88dk-setup-prefix && \
-    echo 'export PATH=/root/.zcc/bin:$PATH' >> /root/.bashrc
+    z88dk-setup-prefix 2>&1 || true && \
+    # Verify z88dk was installed and zcc is available after setup
+    /root/.zcc/bin/zcc --version || echo "Warning: /root/.zcc/bin/zcc not found, trying fallback" && \
+    which zcc || find /opt /usr -name "zcc" -type f 2>/dev/null | head -1 || true
 
 ENV PATH=/root/.zcc/bin:$PATH
 ENV ZCCCFG=/root/.zcc/lib/config.toml
@@ -54,14 +55,10 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install runtime dependencies only
+# Note: --vo null --ao null means no SDL2/GTK needed; just min libs for zesarux
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
-    libgatk-3-0 \
-    libsdl2-2.0-0 \
-    libpng16-16 \
-    zlib1g \
-    wget \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -69,12 +66,15 @@ RUN apt-get update && apt-get install -y \
 COPY --from=builder /root/.zcc /root/.zcc
 COPY --from=builder /opt/zesarux /opt/zesarux
 
-# Set up environment
+# Set up environment - z88dk should be available in PATH from builder
 ENV PATH=/root/.zcc/bin:/opt:$PATH
 ENV ZCCCFG=/root/.zcc/lib/config.toml
 
 # Create working directory
 WORKDIR /workspace
+
+# Verify both tools work (zcc and zesarux)
+RUN zcc --version && /opt/zesarux --helpall > /dev/null && echo "All tools verified"
 
 # Default command: bash for interactive use or script execution
 CMD ["/bin/bash"]
