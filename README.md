@@ -119,6 +119,39 @@ Build with `DEBUG=1 ./build.sh` to enable debug output. In a debug build the pro
 - Seek operation status (loop counts, sense interrupt retries, MSR/ST0 values)
 - Timeouts and failure details
 
+## Docker Build & CI
+
+### Build with Docker
+
+A `Dockerfile` is provided that includes z88dk, ZEsarUX, and Python dependencies:
+
+```sh
+docker build -t zx3-disk-test:latest .
+```
+
+### Run smoke test in Docker
+
+```sh
+docker run --rm zx3-disk-test:latest \
+  bash -c "cd /workspace && ./tools/zesarux_smoketest.py --machine P340 --run-timeout 180 --headless"
+```
+
+Or with volume mount to use your local checkout:
+
+```sh
+docker run --rm -v $(pwd):/workspace zx3-disk-test:latest \
+  bash -c "cd /workspace && ./tools/zesarux_smoketest.py --machine P340 --run-timeout 180"
+```
+
+### GitHub Actions
+
+The repository includes a GitHub Actions workflow (`.github/workflows/smoke-test.yml`) that:
+1. Builds the Docker image
+2. Runs the smoke test on every push and PR
+3. Reports pass/fail status
+
+The workflow uses `--headless` mode to run without a display.
+
 ## Notes
 
 - **Emulator variability**: Some emulators don't accurately model all drive signal lines (write-protect, ready status, etc.). The program works around this by using disk-touching probes (like Read ID) as more reliable indicators than status-register bits alone.

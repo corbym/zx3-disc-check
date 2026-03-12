@@ -1,0 +1,12 @@
+.git
+.github
+.gitignore
+.vscode
+*.md
+*.tap
+*.dsk
+out/
+__pycache__
+*.pyc
+Node_modules
+.DS_Store
