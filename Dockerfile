@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y \
     libpulse-dev \
     libsndfile1-dev \
     libasound2-dev \
+    cmake \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -32,7 +33,8 @@ RUN cd /tmp && \
     wget -q https://github.com/z88dk/z88dk/releases/download/v2.3/z88dk-src-2.3.tgz -O z88dk-src.tgz && \
     tar -xzf z88dk-src.tgz && \
     cd z88dk && \
-    ./build.sh -i /opt/z88dk && \
+    chmod +x build.sh && \
+    ./build.sh && \
     cd /tmp && rm -rf z88dk-src.tgz z88dk
 
 ENV PATH=/opt/z88dk/bin:/usr/local/bin:$PATH
