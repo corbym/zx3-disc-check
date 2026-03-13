@@ -68,17 +68,8 @@ jobs:
             zx3-disk-test:ci \
             bash -c "cd /workspace && ./tools/zesarux_smoketest.py --no-build --machine P340 --run-timeout 180 --headless --emulator-binary /usr/local/bin/zesarux"
 
-      - name: Upload build artifacts
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: zx3-disk-test-${{ github.sha }}
-          path: |
-            out/disk_tester.tap
-            out/disk_tester_plus3.dsk
-          if-no-files-found: error
-
-      - name: Create and push release tag
+      - name: Create and push semver tag
+        id: tag_semver
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           set -euo pipefail
@@ -99,16 +90,44 @@ jobs:
             fi
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git tag -a "$TAG" -m "Release $TAG (${GITHUB_SHA})"
+            git tag -a "$TAG" -m "Tag $TAG (${GITHUB_SHA})"
             git push origin "$TAG"
             echo "Created and pushed $TAG"
           else
             echo "Using existing tag on this commit: $TAG"
           fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Decide artifact name
+        id: artifact_name
+        if: success()
+        run: |
+          if [ -n "${{ steps.tag_semver.outputs.tag }}" ]; then
+            echo "name=zx3-disk-test-${{ steps.tag_semver.outputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=zx3-disk-test-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload build artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact_name.outputs.name }}
+          path: |
+            out/disk_tester.tap
+            out/disk_tester_plus3.dsk
+          if-no-files-found: error
 
       - name: Test result summary
         if: success()
-        run: echo "✅ All smoke tests passed"
+        run: |
+          echo "✅ All smoke tests passed"
+          if [ -n "${{ steps.tag_semver.outputs.tag }}" ]; then
+            echo "🏷️ Tag: ${{ steps.tag_semver.outputs.tag }}"
+            echo "📦 Artifacts: zx3-disk-test-${{ steps.tag_semver.outputs.tag }}"
+          else
+            echo "📦 Artifacts: zx3-disk-test-${GITHUB_SHA}"
+          fi
 
       - name: Test failure details
         if: failure()
