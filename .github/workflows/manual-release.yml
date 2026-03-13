@@ -1,0 +1,81 @@
+name: Manual Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve latest semver tag
+        id: latest_tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          git fetch --tags --force
+
+          TAG=$(git tag -l 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)
+          if [ -z "$TAG" ]; then
+            echo "No semver tags found (expected format: v<major>.<minor>.<patch>)."
+            exit 1
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release already exists for tag $TAG. Refusing to continue."
+            exit 1
+          fi
+
+          echo "Using latest tag: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout latest tag
+        run: |
+          git checkout "tags/${{ steps.latest_tag.outputs.tag }}"
+
+      - name: Download tagged workflow artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.latest_tag.outputs.tag }}"
+          ARTIFACT_NAME="zx3-disk-test-${TAG}"
+
+          ARTIFACT_ID=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts" --paginate --jq ".artifacts | map(select(.name == \"${ARTIFACT_NAME}\" and .expired == false)) | sort_by(.created_at) | reverse | .[0].id")
+
+          if [ -z "${ARTIFACT_ID}" ] || [ "${ARTIFACT_ID}" = "null" ]; then
+            echo "No non-expired artifact named ${ARTIFACT_NAME} found."
+            exit 1
+          fi
+
+          mkdir -p out
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > /tmp/release-artifacts.zip
+          unzip -o /tmp/release-artifacts.zip -d out
+
+          test -f out/disk_tester.tap
+          test -f out/disk_tester_plus3.dsk
+
+      - name: Create release with tagged artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.latest_tag.outputs.tag }}"
+
+          gh release create "$TAG" \
+            --verify-tag \
+            --title "$TAG" \
+            --generate-notes \
+            out/disk_tester.tap \
+            out/disk_tester_plus3.dsk
