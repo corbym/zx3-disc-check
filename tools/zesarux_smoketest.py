@@ -10,7 +10,8 @@ from pathlib import Path
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 10000
 DEFAULT_EMULATOR = Path("/Applications/zesarux.app/Contents/MacOS/zesarux")
-MENU_MARKERS = ("SELECT KEY:",)
+DEFAULT_ZESARUX_HOME = Path("/tmp/zesarux-smoketest-home")
+MENU_MARKERS = ("ZX +3 DISK TESTER", "ENTER: SELECT")
 RESULT_MARKERS = ("TEST REPORT CARD", "OVERALL [", "PRESS ANY KEY")
 
 
@@ -108,7 +109,89 @@ def log_ocr_block(enabled: bool, label: str, text: str, max_lines: int = 20) -> 
         print(f"... ({len(lines) - max_lines} more lines)")
 
 
-def capture_menu_screenshot(client: ZrcpClient, screenshot_path: Path) -> None:
+def load_bmp_24(path: Path) -> tuple[int, int, list[list[tuple[int, int, int]]]]:
+    data = path.read_bytes()
+    if data[:2] != b"BM":
+        raise RuntimeError(f"Unsupported screenshot format: {path}")
+
+    pixel_offset = int.from_bytes(data[10:14], "little")
+    width = int.from_bytes(data[18:22], "little", signed=True)
+    height = int.from_bytes(data[22:26], "little", signed=True)
+    bits_per_pixel = int.from_bytes(data[28:30], "little")
+    compression = int.from_bytes(data[30:34], "little")
+
+    if bits_per_pixel != 24 or compression != 0:
+        raise RuntimeError(f"Unsupported BMP layout for screenshot: {path}")
+
+    width_abs = abs(width)
+    height_abs = abs(height)
+    row_stride = ((width_abs * 3 + 3) // 4) * 4
+    rows: list[list[tuple[int, int, int]]] = []
+
+    for row_index in range(height_abs):
+        start = pixel_offset + row_index * row_stride
+        row: list[tuple[int, int, int]] = []
+        for col in range(width_abs):
+            blue, green, red = data[start + col * 3:start + col * 3 + 3]
+            row.append((red, green, blue))
+        rows.append(row)
+
+    if height > 0:
+        rows.reverse()
+
+    return width_abs, height_abs, rows
+
+
+def save_bmp_24(path: Path, width: int, height: int, rows: list[list[tuple[int, int, int]]]) -> None:
+    row_stride = ((width * 3 + 3) // 4) * 4
+    image_size = row_stride * height
+    file_size = 54 + image_size
+    header = bytearray(54)
+
+    header[0:2] = b"BM"
+    header[2:6] = file_size.to_bytes(4, "little")
+    header[10:14] = (54).to_bytes(4, "little")
+    header[14:18] = (40).to_bytes(4, "little")
+    header[18:22] = width.to_bytes(4, "little", signed=True)
+    header[22:26] = height.to_bytes(4, "little", signed=True)
+    header[26:28] = (1).to_bytes(2, "little")
+    header[28:30] = (24).to_bytes(2, "little")
+    header[34:38] = image_size.to_bytes(4, "little")
+    header[38:42] = (2835).to_bytes(4, "little")
+    header[42:46] = (2835).to_bytes(4, "little")
+
+    payload = bytearray()
+    padding = b"\x00" * (row_stride - width * 3)
+    for row in reversed(rows):
+        for red, green, blue in row:
+            payload.extend((blue, green, red))
+        payload.extend(padding)
+
+    path.write_bytes(bytes(header) + bytes(payload))
+
+
+def compact_screenshot_image(path: Path, scale: float) -> None:
+    if scale >= 0.999:
+        return
+
+    width, height, rows = load_bmp_24(path)
+    background = rows[0][0]
+    compact_width = max(1, int(width * scale))
+    compact_height = max(1, int(height * scale))
+    compact_rows = [[background for _ in range(width)] for _ in range(height)]
+    x_offset = (width - compact_width) // 2
+    y_offset = (height - compact_height) // 2
+
+    for dest_y in range(compact_height):
+        src_y = min(height - 1, int(dest_y * height / compact_height))
+        for dest_x in range(compact_width):
+            src_x = min(width - 1, int(dest_x * width / compact_width))
+            compact_rows[y_offset + dest_y][x_offset + dest_x] = rows[src_y][src_x]
+
+    save_bmp_24(path, width, height, compact_rows)
+
+
+def capture_menu_screenshot(client: ZrcpClient, screenshot_path: Path, scale: float) -> None:
     screenshot_path.parent.mkdir(parents=True, exist_ok=True)
     if screenshot_path.exists():
         screenshot_path.unlink()
@@ -118,6 +201,7 @@ def capture_menu_screenshot(client: ZrcpClient, screenshot_path: Path) -> None:
     deadline = time.time() + 3.0
     while time.time() < deadline:
         if screenshot_path.exists() and screenshot_path.stat().st_size > 0:
+            compact_screenshot_image(screenshot_path, scale)
             return
         time.sleep(0.1)
 
@@ -225,6 +309,7 @@ def run_single_test_and_return(
     menu_return_timeout: float,
     ocr_poll_s: float,
     exit_key: int | None = None,
+    exit_key_repeat: int = 1,
     allow_unknown_option: bool = False,
 ) -> str:
     deadline = time.time() + run_timeout
@@ -258,19 +343,22 @@ def run_single_test_and_return(
     else:
         returned_menu_text = ""
         deadline = time.time() + menu_return_timeout
-        exit_seq = " ".join([str(exit_key)] * 12)
+        exit_seq = " ".join([str(exit_key)] * max(1, exit_key_repeat))
         while time.time() < deadline:
             client.command(f"send-keys-ascii {key_delay_ms} {exit_seq}")
-            try:
-                returned_menu_text = wait_for_ocr(
+            prompt_or_menu_text = client.ocr()
+            if "PRESS ANY KEY" in prompt_or_menu_text:
+                returned_menu_text = leave_press_any_key_prompt(
                     client,
-                    MENU_MARKERS,
-                    0.8,
-                    interval=ocr_poll_s,
+                    menu_return_timeout,
+                    key_delay_ms,
+                    ocr_poll_s,
                 )
                 break
-            except TimeoutError:
-                continue
+            if all(marker in prompt_or_menu_text for marker in MENU_MARKERS):
+                returned_menu_text = prompt_or_menu_text
+                break
+            time.sleep(ocr_poll_s)
         if not returned_menu_text:
             raise TimeoutError("Timed out returning from looped test")
     clean_menu = clean_response(returned_menu_text)
@@ -308,10 +396,11 @@ def mount_dsk_after_tap_load(
     )
 
 
-def build_project(repo_root: Path, debug_mode: str, compact_ui: str) -> None:
+def build_project(repo_root: Path, debug_mode: str, compact_ui: str, headless: bool) -> None:
     env = dict(os.environ)
     env["DEBUG"] = "1" if debug_mode == "on" else "0"
     env["COMPACT_UI"] = "1" if compact_ui == "on" else "0"
+    env["HEADLESS_ROM_FONT"] = "1" if headless else "0"
     subprocess.run(["sh", str(repo_root / "build.sh")], cwd=repo_root, check=True, env=env)
 
 
@@ -332,6 +421,11 @@ def start_emulator(
     zoom: int | None,
     headless: bool = False,
 ) -> subprocess.Popen:
+    env = dict(os.environ)
+    # Keep smoke runs isolated from user-level ZEsarUX and SDL config drift.
+    DEFAULT_ZESARUX_HOME.mkdir(parents=True, exist_ok=True)
+    env["HOME"] = str(DEFAULT_ZESARUX_HOME)
+
     cmd = [
         str(binary),
         "--machine",
@@ -347,13 +441,17 @@ def start_emulator(
     if headless:
         cmd += ["--vo", "null", "--ao", "null"]
     else:
+        env.pop("SDL_VIDEODRIVER", None)
+        env.pop("SDL_AUDIODRIVER", None)
         if video_driver:
             cmd += ["--vo", video_driver]
+        cmd += ["--ao", "coreaudio"]
         if zoom is not None and zoom > 0:
             cmd += ["--zoom", str(zoom)]
 
     return subprocess.Popen(
         cmd,
+        env=env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
@@ -453,6 +551,12 @@ def main() -> int:
         help="Optional BMP/SCR/PBM screenshot path captured when tester menu is visible",
     )
     parser.add_argument(
+        "--menu-screenshot-scale",
+        type=float,
+        default=1.0,
+        help="Optional post-capture scale for reviewer screenshots; use 0.0-1.0 to shrink image content",
+    )
+    parser.add_argument(
         "--log-ocr",
         action="store_true",
         help="Print key OCR captures to stdout for CI build logs",
@@ -476,7 +580,7 @@ def main() -> int:
         dsk_path = (repo_root / args.dsk).resolve() if not args.dsk.is_absolute() else args.dsk.resolve()
 
     if not args.no_build:
-        build_project(repo_root, args.debug_mode, args.compact_ui)
+        build_project(repo_root, args.debug_mode, args.compact_ui, args.headless)
 
     if args.compact_ui == "on":
         print("WARNING: --compact-ui on is intended for human display and may reduce OCR reliability", file=sys.stderr)
@@ -564,7 +668,7 @@ def main() -> int:
         write_ocr_artifact(artifacts_dir, "menu_loaded.txt", menu_text)
         log_ocr_block(args.log_ocr, "menu-loaded", menu_text)
         if menu_screenshot_path is not None:
-            capture_menu_screenshot(client, menu_screenshot_path)
+            capture_menu_screenshot(client, menu_screenshot_path, max(0.1, min(args.menu_screenshot_scale, 1.0)))
             print(f"Menu screenshot saved: {menu_screenshot_path}")
 
         if args.menu_only:
@@ -609,7 +713,7 @@ def main() -> int:
             args.run_timeout,
             args.menu_return_timeout,
             ocr_poll_s,
-            exit_key=88,  # 'X'
+            exit_key=13,  # Enter
             allow_unknown_option=True,
         )
         cleaned_recal_seek = clean_response(recal_seek_text)
@@ -632,6 +736,7 @@ def main() -> int:
             max(args.menu_return_timeout, 12.0),
             ocr_poll_s,
             exit_key=88,  # 'X'
+            exit_key_repeat=12,
             allow_unknown_option=True,
         )
         write_ocr_artifact(artifacts_dir, "test_track_loop.txt", track_text)
@@ -651,6 +756,7 @@ def main() -> int:
             max(args.menu_return_timeout, 12.0),
             ocr_poll_s,
             exit_key=88,  # 'X'
+            exit_key_repeat=12,
             allow_unknown_option=True,
         )
         write_ocr_artifact(artifacts_dir, "test_rpm.txt", rpm_text)
@@ -662,8 +768,10 @@ def main() -> int:
         if not any(s in cleaned_rpm for s in ("VALUE=", "SAME SEC", "NO REV MARK", "ID FAIL")):
             raise RuntimeError(f"RPM test produced no recognisable result\nOCR: {cleaned_rpm!r}")
 
-        # Full run-all from menu key only (no Enter).
-        client.command(f"send-keys-ascii {key_delay_ms} 65")
+        # Full run-all from menu selection: default starts on first item.
+        client.command(
+            f"send-keys-ascii {key_delay_ms} 65 65 65 65 65 65 65 13"
+        )
         results_text, snapshots = wait_for_results_with_snapshots(
             client,
             args.run_timeout,

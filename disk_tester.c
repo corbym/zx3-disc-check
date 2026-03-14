@@ -128,125 +128,180 @@ static unsigned char startup_bank678;
  * Character rendering is then independent of any ROM paging changes.
  */
 static unsigned char font_ram[1024];
+#if COMPACT_UI && !HEADLESS_ROM_FONT
+static unsigned char font_rom[1024];
+static unsigned char compact_font_active = 1;
+#endif
+
+#ifndef HEADLESS_ROM_FONT
+#define HEADLESS_ROM_FONT 0
+#endif
 
 #if COMPACT_UI
 typedef struct {
   unsigned char ch;
-  unsigned char rows[7];
+  unsigned char rows[8];
 } CompactGlyph;
 
-static void set_compact_glyph(unsigned char ch, const unsigned char rows[7]) {
-  unsigned char *glyph = &font_ram[((unsigned short)ch) * 8U];
+static void set_compact_glyph(unsigned char *font,
+                              unsigned char ch,
+                              const unsigned char rows[8]) {
+  unsigned char *glyph = &font[((unsigned short)ch) * 8U];
   unsigned char r;
 
-  for (r = 0; r < 7; r++) {
-    glyph[r] = (unsigned char)(rows[r] << 2);
+  for (r = 0; r < 8; r++) {
+    glyph[r] = rows[r];
   }
-  glyph[7] = 0x00;
 }
 
-static void copy_font_glyph(unsigned char dst, unsigned char src) {
-  memcpy(&font_ram[((unsigned short)dst) * 8U],
-         &font_ram[((unsigned short)src) * 8U],
+static void copy_font_glyph(unsigned char *font,
+                            unsigned char dst,
+                            unsigned char src) {
+  memcpy(&font[((unsigned short)dst) * 8U],
+         &font[((unsigned short)src) * 8U],
          8U);
 }
 
-static void apply_compact_font(void) {
+static void apply_compact_font(unsigned char *font) {
   unsigned char ch;
   unsigned int i;
+  /*
+  * Source: epto/epto-fonts (digital-6x6), GPL-2.0 repository.
+   * We use an ASCII subset required by the UI.
+   */
+  static const unsigned char fallback_rows[8] = {
+      0x00, 0x7E, 0xA5, 0x99, 0x99, 0xA5, 0x7E, 0x00};
   static const CompactGlyph glyphs[] = {
-      {' ', {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}},
-      {'!', {0x04, 0x04, 0x04, 0x04, 0x04, 0x00, 0x04}},
-      {'"', {0x0A, 0x0A, 0x0A, 0x00, 0x00, 0x00, 0x00}},
-      {'#', {0x0A, 0x1F, 0x0A, 0x0A, 0x1F, 0x0A, 0x00}},
-      {'+', {0x00, 0x04, 0x04, 0x1F, 0x04, 0x04, 0x00}},
-      {',', {0x00, 0x00, 0x00, 0x00, 0x04, 0x04, 0x08}},
-      {'-', {0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00}},
-      {'.', {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04}},
-      {'/', {0x01, 0x02, 0x02, 0x04, 0x08, 0x08, 0x10}},
-      {'0', {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E}},
-      {'1', {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E}},
-      {'2', {0x0E, 0x11, 0x01, 0x06, 0x08, 0x10, 0x1F}},
-      {'3', {0x1F, 0x01, 0x02, 0x06, 0x01, 0x11, 0x0E}},
-      {'4', {0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02}},
-      {'5', {0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E}},
-      {'6', {0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E}},
-      {'7', {0x1F, 0x01, 0x02, 0x02, 0x04, 0x04, 0x04}},
-      {'8', {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E}},
-      {'9', {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C}},
-      {':', {0x00, 0x04, 0x04, 0x00, 0x04, 0x04, 0x00}},
-      {';', {0x00, 0x04, 0x04, 0x00, 0x04, 0x04, 0x08}},
-      {'=', {0x00, 0x00, 0x1F, 0x00, 0x1F, 0x00, 0x00}},
-      {'?', {0x0E, 0x11, 0x01, 0x06, 0x04, 0x00, 0x04}},
-      {'[', {0x0E, 0x08, 0x08, 0x08, 0x08, 0x08, 0x0E}},
-      {'\\', {0x10, 0x08, 0x08, 0x04, 0x02, 0x02, 0x01}},
-      {']', {0x0E, 0x02, 0x02, 0x02, 0x02, 0x02, 0x0E}},
-      {'_', {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1F}},
-      {'|', {0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04}},
-      {'A', {0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11}},
-      {'B', {0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E}},
-      {'C', {0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E}},
-      {'D', {0x1C, 0x12, 0x11, 0x11, 0x11, 0x12, 0x1C}},
-      {'E', {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F}},
-      {'F', {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10}},
-      {'G', {0x0E, 0x11, 0x10, 0x10, 0x13, 0x11, 0x0E}},
-      {'H', {0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11}},
-      {'I', {0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E}},
-      {'J', {0x1F, 0x01, 0x01, 0x01, 0x01, 0x11, 0x0E}},
-      {'K', {0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11}},
-      {'L', {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F}},
-      {'M', {0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11}},
-      {'N', {0x11, 0x11, 0x19, 0x15, 0x13, 0x11, 0x11}},
-      {'O', {0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}},
-      {'P', {0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10}},
-      {'Q', {0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D}},
-      {'R', {0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11}},
-      {'S', {0x0E, 0x11, 0x10, 0x0E, 0x01, 0x11, 0x0E}},
-      {'T', {0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04}},
-      {'U', {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}},
-      {'V', {0x11, 0x11, 0x11, 0x11, 0x0A, 0x0A, 0x04}},
-      {'W', {0x11, 0x11, 0x11, 0x15, 0x15, 0x15, 0x0A}},
-      {'X', {0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11}},
-      {'Y', {0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04}},
-      {'Z', {0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F}},
+      {' ', {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}},
+      {'!', {0x00, 0x18, 0x3C, 0x18, 0x00, 0x18, 0x00, 0x00}},
+      {'"', {0x00, 0x28, 0x28, 0x00, 0x00, 0x00, 0x00, 0x00}},
+      {'#', {0x00, 0x10, 0x3C, 0x7C, 0x3C, 0x10, 0x00, 0x00}},
+      {'+', {0x00, 0x10, 0x10, 0x7C, 0x10, 0x10, 0x00, 0x00}},
+      {',', {0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x30, 0x00}},
+      {'-', {0x00, 0x00, 0x00, 0x7C, 0x00, 0x00, 0x00, 0x00}},
+      {'.', {0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00}},
+      {'/', {0x00, 0x06, 0x0C, 0x18, 0x30, 0x60, 0x00, 0x00}},
+      {'0', {0x00, 0x7C, 0x44, 0x64, 0x64, 0x7C, 0x00, 0x00}},
+      {'1', {0x00, 0x10, 0x10, 0x18, 0x18, 0x18, 0x00, 0x00}},
+      {'2', {0x00, 0x7C, 0x04, 0x7C, 0x60, 0x7C, 0x00, 0x00}},
+      {'3', {0x00, 0x78, 0x08, 0x7C, 0x0C, 0x7C, 0x00, 0x00}},
+      {'4', {0x00, 0x50, 0x50, 0x7C, 0x18, 0x18, 0x00, 0x00}},
+      {'5', {0x00, 0x7C, 0x40, 0x7C, 0x0C, 0x7C, 0x00, 0x00}},
+      {'6', {0x00, 0x7C, 0x40, 0x7C, 0x4C, 0x7C, 0x00, 0x00}},
+      {'7', {0x00, 0x78, 0x08, 0x0C, 0x0C, 0x0C, 0x00, 0x00}},
+      {'8', {0x00, 0x78, 0x48, 0x7C, 0x4C, 0x7C, 0x00, 0x00}},
+      {'9', {0x00, 0x78, 0x48, 0x7C, 0x0C, 0x7C, 0x00, 0x00}},
+      {':', {0x00, 0x18, 0x18, 0x00, 0x18, 0x18, 0x00, 0x00}},
+      {';', {0x00, 0x00, 0x0C, 0x00, 0x0C, 0x0C, 0x18, 0x00}},
+      {'=', {0x00, 0x00, 0x7C, 0x00, 0x7C, 0x00, 0x00, 0x00}},
+      {'?', {0x00, 0x18, 0x24, 0x0C, 0x18, 0x00, 0x18, 0x00}},
+      {'A', {0x00, 0x7C, 0x44, 0x7C, 0x64, 0x64, 0x00, 0x00}},
+      {'B', {0x00, 0x78, 0x44, 0x78, 0x64, 0x78, 0x00, 0x00}},
+      {'C', {0x00, 0x7C, 0x40, 0x60, 0x60, 0x7C, 0x00, 0x00}},
+      {'D', {0x00, 0x78, 0x44, 0x64, 0x64, 0x78, 0x00, 0x00}},
+      {'E', {0x00, 0x7C, 0x40, 0x78, 0x60, 0x7C, 0x00, 0x00}},
+      {'F', {0x00, 0x7C, 0x40, 0x78, 0x60, 0x60, 0x00, 0x00}},
+      {'G', {0x00, 0x7C, 0x40, 0x6C, 0x64, 0x7C, 0x00, 0x00}},
+      {'H', {0x00, 0x44, 0x44, 0x7C, 0x64, 0x64, 0x00, 0x00}},
+      {'I', {0x00, 0x7C, 0x10, 0x18, 0x18, 0x7C, 0x00, 0x00}},
+      {'J', {0x00, 0x7C, 0x04, 0x0C, 0x4C, 0x7C, 0x00, 0x00}},
+      {'K', {0x00, 0x44, 0x48, 0x70, 0x68, 0x64, 0x00, 0x00}},
+      {'L', {0x00, 0x40, 0x40, 0x60, 0x60, 0x7C, 0x00, 0x00}},
+      {'M', {0x00, 0x7C, 0x74, 0x74, 0x54, 0x44, 0x00, 0x00}},
+      {'N', {0x00, 0x7C, 0x44, 0x64, 0x64, 0x64, 0x00, 0x00}},
+      {'O', {0x00, 0x7C, 0x44, 0x64, 0x64, 0x7C, 0x00, 0x00}},
+      {'P', {0x00, 0x7C, 0x44, 0x7C, 0x60, 0x60, 0x00, 0x00}},
+      {'Q', {0x00, 0x7C, 0x44, 0x64, 0x6C, 0x7E, 0x00, 0x00}},
+      {'R', {0x00, 0x7C, 0x44, 0x7C, 0x68, 0x64, 0x00, 0x00}},
+      {'S', {0x00, 0x7C, 0x40, 0x7C, 0x0C, 0x7C, 0x00, 0x00}},
+      {'T', {0x00, 0x7C, 0x10, 0x18, 0x18, 0x18, 0x00, 0x00}},
+      {'U', {0x00, 0x44, 0x44, 0x64, 0x64, 0x7C, 0x00, 0x00}},
+      {'V', {0x00, 0x44, 0x6C, 0x28, 0x38, 0x10, 0x00, 0x00}},
+      {'W', {0x00, 0x44, 0x54, 0x74, 0x74, 0x7C, 0x00, 0x00}},
+      {'X', {0x00, 0x6C, 0x38, 0x10, 0x38, 0x6C, 0x00, 0x00}},
+      {'Y', {0x00, 0x6C, 0x38, 0x10, 0x18, 0x18, 0x00, 0x00}},
+      {'Z', {0x00, 0x7C, 0x0C, 0x18, 0x30, 0x7C, 0x00, 0x00}},
+      {'[', {0x00, 0x3C, 0x30, 0x30, 0x30, 0x3C, 0x00, 0x00}},
+      {'\\', {0x00, 0x30, 0x18, 0x0C, 0x06, 0x02, 0x00, 0x00}},
+      {']', {0x00, 0x3C, 0x0C, 0x0C, 0x0C, 0x3C, 0x00, 0x00}},
+      {'_', {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7C, 0x00}},
+      {'|', {0x00, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x00}},
   };
 
-  memset(font_ram, 0x00, sizeof(font_ram));
+  /* Start from a fully custom font: no ROM glyph dependency in compact mode. */
+  memset(font, 0x00, sizeof(font_ram));
 
-  for (i = 0; i < sizeof(glyphs) / sizeof(glyphs[0]); i++) {
-    set_compact_glyph(glyphs[i].ch, glyphs[i].rows);
+  /* Seed printable range with a custom fallback to avoid random artifacts. */
+  for (ch = 32; ch <= 126; ch++) {
+    set_compact_glyph(font, ch, fallback_rows);
   }
 
-  /* Make undefined printable glyphs readable in compact mode. */
-  for (ch = 32; ch <= 126; ch++) {
-    unsigned char *glyph = &font_ram[((unsigned short)ch) * 8U];
-    if ((glyph[0] | glyph[1] | glyph[2] | glyph[3] |
-         glyph[4] | glyph[5] | glyph[6] | glyph[7]) == 0) {
-      copy_font_glyph(ch, '?');
-    }
+  for (i = 0; i < sizeof(glyphs) / sizeof(glyphs[0]); i++) {
+    set_compact_glyph(font, glyphs[i].ch, glyphs[i].rows);
   }
 
   /* Lowercase maps to uppercase to keep wording readable with a compact set. */
   for (ch = 'a'; ch <= 'z'; ch++) {
-    copy_font_glyph(ch, (unsigned char)(ch - 'a' + 'A'));
+    copy_font_glyph(font, ch, (unsigned char)(ch - 'a' + 'A'));
   }
 }
 #endif
 
 static void init_ui_font(void) {
+#if HEADLESS_ROM_FONT
+  /* Headless/OCR builds use ROM glyphs for maximum recognition stability. */
+  memcpy(font_ram, (const void *)0x3C00, sizeof(font_ram));
+#elif COMPACT_UI
+  /* Compact GUI uses a fully custom sprite-like glyph set by default. */
+  memcpy(font_rom, (const void *)0x3C00, sizeof(font_rom));
+  apply_compact_font(font_ram);
+  compact_font_active = 1;
+#else
   /* Copy ROM font first so paging changes cannot corrupt rendered text. */
   memcpy(font_ram, (const void *)0x3C00, sizeof(font_ram));
 
-  /*
-   * Optional compact mode replaces glyphs with a custom compact font.
-   * Default build keeps ROM-compatible glyphs for OCR stability.
-   */
-#if COMPACT_UI
-  apply_compact_font();
+  /* Default build keeps ROM-compatible glyphs for OCR stability. */
 #endif
 
   ioctl(1, IOCTL_OTERM_FONT, font_ram);
 }
+
+#if COMPACT_UI && !HEADLESS_ROM_FONT
+static void select_compact_font(void) {
+  if (!compact_font_active) {
+    ioctl(1, IOCTL_OTERM_FONT, font_ram);
+    compact_font_active = 1;
+  }
+}
+
+static void select_rom_font(void) {
+  if (compact_font_active) {
+    ioctl(1, IOCTL_OTERM_FONT, font_rom);
+    compact_font_active = 0;
+  }
+}
+
+/*
+ * Explicit print mode commands for compact GUI builds.
+ * - compact: uses the fully custom 8x8 glyph set.
+ * - rom: uses untouched ROM glyphs copied to private RAM.
+ */
+void ui_print_command_compact(void) {
+  select_compact_font();
+}
+
+void ui_print_command_rom(void) {
+  select_rom_font();
+}
+
+void ui_print_command_rom_text(const char *text) {
+  select_rom_font();
+  while (*text) {
+    putchar(*text++);
+  }
+  select_compact_font();
+}
+#endif
 
 /* Test results storage */
 typedef struct {
@@ -281,7 +336,73 @@ static unsigned char pass_count(void) {
 static void ui_clear_screen(void) {
   /* Form feed clears the text area on Spectrum terminals. */
   putchar('\f');
+  putchar('\r');
   fflush(stdout);
+}
+
+/* ZX colour IDs */
+#define ZX_COLOUR_BLACK 0
+#define ZX_COLOUR_BLUE 1
+#define ZX_COLOUR_WHITE 7
+#define ZX_COLOUR_CYAN 5
+#define ZX_COLOUR_CYAN 5
+#define ZX_ATTR_BASE 0x5800
+
+static void ui_attr_set_cell(unsigned char row,
+                             unsigned char col,
+                             unsigned char ink,
+                             unsigned char paper,
+                             unsigned char bright) {
+  volatile unsigned char* attr = (volatile unsigned char*)ZX_ATTR_BASE;
+  if (row >= 24 || col >= 32) return;
+  attr[(unsigned short)row * 32U + col] =
+      (unsigned char)(((bright ? 1U : 0U) << 6) |
+                      ((paper & 0x07U) << 3) |
+                      (ink & 0x07U));
+}
+
+static void ui_attr_fill(unsigned char ink,
+                         unsigned char paper,
+                         unsigned char bright) {
+  unsigned char row;
+  unsigned char col;
+  for (row = 0; row < 24; row++) {
+    for (col = 0; col < 32; col++) {
+      ui_attr_set_cell(row, col, ink, paper, bright);
+    }
+  }
+}
+
+static void ui_menu_apply_attributes(unsigned char selected_index) {
+  unsigned char i;
+
+  /* Default menu palette: black on white for high readability. */
+  ui_attr_fill(ZX_COLOUR_BLACK, ZX_COLOUR_WHITE, 0);
+
+  /* Bold title row. */
+  for (i = 0; i < 32; i++) {
+    ui_attr_set_cell(0, i, ZX_COLOUR_CYAN, ZX_COLOUR_WHITE, 1);
+  }
+
+  /* Blue bold first letters on each menu line; selected row gets a strip. */
+  for (i = 0; i < 11; i++) {
+    unsigned char row = (unsigned char)(3 + i);
+    unsigned char paper = ZX_COLOUR_WHITE;
+    if (i == selected_index) {
+      unsigned char col;
+      paper = ZX_COLOUR_CYAN;
+      for (col = 0; col < 32; col++) {
+        ui_attr_set_cell(row, col, ZX_COLOUR_BLACK, paper, 1);
+      }
+    }
+    ui_attr_set_cell(row, 1, ZX_COLOUR_BLUE, paper, 1);
+  }
+
+  /* Controls hint rows in bold. */
+  for (i = 0; i < 32; i++) {
+    ui_attr_set_cell(15, i, ZX_COLOUR_BLACK, ZX_COLOUR_WHITE, 1);
+    ui_attr_set_cell(16, i, ZX_COLOUR_BLACK, ZX_COLOUR_WHITE, 1);
+  }
 }
 
 static void ui_print_bar(const char* label, unsigned char ok) {
@@ -294,6 +415,12 @@ static void ui_print_bar(const char* label, unsigned char ok) {
   }
   putchar(']');
   printf(" %s\n", pass_fail(ok));
+}
+
+static void ui_test_header(const char* title) {
+  ui_clear_screen();
+  printf(" %s\n", title);
+  printf("------------------------------\n");
 }
 
 static const char* read_id_failure_reason(unsigned char st1, unsigned char st2) {
@@ -333,6 +460,34 @@ static unsigned char break_pressed(void) {
   unsigned char caps_shift = (unsigned char)(inportb(0xFEFE) & 0x01);
   unsigned char space = (unsigned char)(inportb(0x7FFE) & 0x01);
   return (unsigned char)((caps_shift == 0) && (space == 0));
+}
+
+static unsigned char caps_shift_pressed(void) {
+  return (unsigned char)((inportb(0xFEFE) & 0x01) == 0);
+}
+
+static unsigned char key6_pressed(void) {
+  return (unsigned char)((inportb(0xEFFE) & 0x10) == 0);
+}
+
+static unsigned char key7_pressed(void) {
+  return (unsigned char)((inportb(0xEFFE) & 0x08) == 0);
+}
+
+static unsigned char q_pressed(void) {
+  return (unsigned char)((inportb(0xFBFE) & 0x01) == 0);
+}
+
+static unsigned char a_pressed(void) {
+  return (unsigned char)((inportb(0xFDFE) & 0x01) == 0);
+}
+
+static unsigned char menu_down_pressed(void) {
+  return a_pressed();
+}
+
+static unsigned char menu_up_pressed(void) {
+  return q_pressed();
 }
 
 static unsigned char x_pressed(void) {
@@ -381,6 +536,42 @@ static int read_key_blocking(void) {
   }
 }
 
+#define MENU_KEY_UP (-2)
+#define MENU_KEY_DOWN (-3)
+
+static int read_menu_key_blocking(void) {
+  unsigned int i;
+
+  for (;;) {
+    if (break_pressed()) {
+      while (break_pressed()) {
+      }
+      return 27;
+    }
+
+    if (menu_up_pressed()) {
+      while (menu_up_pressed() || any_mapped_key_down()) {
+      }
+      return MENU_KEY_UP;
+    }
+
+    if (menu_down_pressed()) {
+      while (menu_down_pressed() || any_mapped_key_down()) {
+      }
+      return MENU_KEY_DOWN;
+    }
+
+    for (i = 0; i < sizeof(keymap) / sizeof(keymap[0]); i++) {
+      if ((inportb(keymap[i].row_port) & keymap[i].bit_mask) == 0) {
+        char key = keymap[i].key;
+        while (any_mapped_key_down()) {
+        }
+        return key;
+      }
+    }
+  }
+}
+
 static unsigned char retry_or_exit(void) {
   int ch;
 
@@ -393,6 +584,11 @@ static unsigned char retry_or_exit(void) {
 static unsigned char loop_exit_requested(void) {
   if (break_pressed()) {
     while (break_pressed()) {
+    }
+    return 1;
+  }
+  if ((inportb(0xBFFE) & 0x01) == 0) {
+    while ((inportb(0xBFFE) & 0x01) == 0) {
     }
     return 1;
   }
@@ -676,13 +872,17 @@ static void test_motor_and_drive_status(int interactive) {
   unsigned char st3 = 0;
   unsigned char have_st3;
 
-  printf("\n== MOTOR AND STATUS ==\n");
+  ui_test_header("MOTOR AND DRIVE STATUS");
   printf("MOTOR ON\n");
   plus3_motor_on();
 
   have_st3 = cmd_sense_drive_status(FDC_DRIVE, 0, &st3);
   if (!have_st3) {
     printf("ST3: TIMEOUT\n");
+    printf("READY : NO\n");
+    printf("WPROT : NO\n");
+    printf("TRACK0: NO\n");
+    printf("FAULT : NO\n");
     results.sense_drive_pass = 0;
   } else {
     printf("ST3 = 0x%02X\n", st3);
@@ -696,6 +896,7 @@ static void test_motor_and_drive_status(int interactive) {
   printf("MOTOR OFF\n");
   plus3_motor_off();
   results.motor_test_pass = 1;
+  printf("\nRESULT: %s\n", pass_fail(results.sense_drive_pass));
   press_any_key(interactive);
 }
 
@@ -706,13 +907,17 @@ static void test_read_id_probe(void) {
   unsigned char st1 = 0, st2 = 0, c = 0, h = 0, r = 0, n = 0;
   unsigned char have_st3 = 0;
 
-  printf("\n== DRIVE PROBE ==\n");
+  ui_test_header("DRIVE READ ID PROBE");
   plus3_motor_on();
 
   /* 1) Raw drive lines (ST3), informational */
   have_st3 = cmd_sense_drive_status(FDC_DRIVE, 0, &st3);
   if (!have_st3) {
     printf("ST3: TIMEOUT\n");
+    printf("READY : NO\n");
+    printf("WPROT : NO\n");
+    printf("TRACK0: NO\n");
+    printf("FAULT : NO\n");
   } else {
     printf("ST3 = 0x%02X\n", st3);
     printf("READY : %s\n", yes_no(st3 & 0x20));
@@ -746,7 +951,7 @@ static void test_read_id_probe(void) {
   }
 
   results.sense_drive_pass = rid_ok ? 1 : 0;
-  printf("RESULT: %s\n", pass_fail(results.sense_drive_pass));
+  printf("\nRESULT: %s\n", pass_fail(results.sense_drive_pass));
 
   plus3_motor_off();
 }
@@ -757,108 +962,59 @@ static void test_recal_seek_track2(int interactive) {
   unsigned char target = 2;
   unsigned char recal_ok = 0;
   unsigned char seek_ok = 0;
-  unsigned char done = 0;
+  (void)interactive;
 
-  while (!done) {
-    printf("\n== RECAL + SEEK %u ==\n", target);
+  ui_test_header("RECALIBRATE AND SEEK TRACK 2");
 
-    plus3_motor_on();
+  plus3_motor_on();
 
-    if (!wait_drive_ready(FDC_DRIVE, 0, &st3)) {
-      printf("FAIL: DRIVE NOT READY (ST3=0x%02X)\n", st3);
-      results.recalibrate_pass = 0;
-      results.seek_pass = 0;
-      plus3_motor_off();
-      if (interactive) {
-        done = retry_or_exit();
-        continue;
-      }
-      return;
-    }
-
-    if (!cmd_recalibrate(FDC_DRIVE)) {
-      printf("FAIL: recal cmd\n");
-      results.recalibrate_pass = 0;
-      results.seek_pass = 0;
-      plus3_motor_off();
-      if (interactive) {
-        done = retry_or_exit();
-        continue;
-      }
-      return;
-    }
-
-    if (!wait_seek_complete(FDC_DRIVE, &st0, &pcn)) {
-      printf("FAIL: wait timeout\n");
-      results.recalibrate_pass = 0;
-      results.seek_pass = 0;
-      plus3_motor_off();
-      if (interactive) {
-        done = retry_or_exit();
-        continue;
-      }
-      return;
-    }
-
-    printf("SenseInt: ST0=0x%02X, PCN=%u\n", st0, pcn);
-    recal_ok = (unsigned char)(pcn == 0);
-
-    if (debug_enabled) {
-      printf("DBG seek start MSR=0x%02X\n", fdc_msr());
-    }
-
-    if (!cmd_seek(FDC_DRIVE, 0, target)) {
-      printf("FAIL: seek cmd\n");
-      if (debug_enabled) {
-        printf("DBG seek cmd MSR=0x%02X\n", fdc_msr());
-      }
-      results.recalibrate_pass = recal_ok;
-      results.seek_pass = 0;
-      plus3_motor_off();
-      if (interactive) {
-        done = retry_or_exit();
-        continue;
-      }
-      return;
-    }
-
-    if (!wait_seek_complete(FDC_DRIVE, &st0, &pcn)) {
-      printf("FAIL: wait timeout\n");
-      if (debug_enabled) {
-        printf("DBG wait loops=%u tries=%u st0=0x%02X msr=0x%02X\n",
-               dbg_seek_wait_loops, dbg_seek_sense_tries, dbg_seek_last_st0,
-               fdc_msr());
-      }
-      results.recalibrate_pass = recal_ok;
-      results.seek_pass = 0;
-      plus3_motor_off();
-      if (interactive) {
-        done = retry_or_exit();
-        continue;
-      }
-      return;
-    }
-
-    printf("SenseInt: ST0=0x%02X, PCN=%u\n", st0, pcn);
-    if (debug_enabled) {
-      printf("DBG wait loops=%u tries=%u msr=0x%02X\n",
-             dbg_seek_wait_loops, dbg_seek_sense_tries, fdc_msr());
-    }
-    seek_ok = (unsigned char)(pcn == target);
-
-    results.recalibrate_pass = recal_ok;
-    results.seek_pass = seek_ok;
-    printf("Recal: %s\n", pass_fail(results.recalibrate_pass));
-    printf("Seek : %s\n", pass_fail(results.seek_pass));
-
+  if (!wait_drive_ready(FDC_DRIVE, 0, &st3)) {
+    printf("DRIVE READY: FAIL (ST3=0x%02X)\n", st3);
+    results.recalibrate_pass = 0;
+    results.seek_pass = 0;
     plus3_motor_off();
-
-    if (!interactive) {
-      return;
-    }
-
-    done = retry_or_exit();
+    printf("\nRESULT: FAIL\n");
+    return;
   }
+
+  if (!cmd_recalibrate(FDC_DRIVE) || !wait_seek_complete(FDC_DRIVE, &st0, &pcn)) {
+    printf("RECAL: FAIL\n");
+    results.recalibrate_pass = 0;
+    results.seek_pass = 0;
+    plus3_motor_off();
+    printf("\nRESULT: FAIL\n");
+    return;
+  }
+
+  printf("SenseInt: ST0=0x%02X, PCN=%u\n", st0, pcn);
+  printf("RECAL ST0=0x%02X\n", st0);
+  printf("RECAL PCN=%u\n", pcn);
+  recal_ok = (unsigned char)(pcn == 0);
+
+  if (!cmd_seek(FDC_DRIVE, 0, target) || !wait_seek_complete(FDC_DRIVE, &st0, &pcn)) {
+    printf("SEEK: FAIL\n");
+    results.recalibrate_pass = recal_ok;
+    results.seek_pass = 0;
+    plus3_motor_off();
+    printf("\nRESULT: FAIL\n");
+    return;
+  }
+
+  printf("SenseInt: ST0=0x%02X, PCN=%u\n", st0, pcn);
+  printf("SEEK ST0=0x%02X\n", st0);
+  printf("SEEK PCN=%u\n", pcn);
+  seek_ok = (unsigned char)(pcn == target);
+
+  results.recalibrate_pass = recal_ok;
+  results.seek_pass = seek_ok;
+  printf("Recal: %s\n", pass_fail(results.recalibrate_pass));
+  printf("Seek : %s\n", pass_fail(results.seek_pass));
+  printf("RECAL RESULT: %s\n", pass_fail(results.recalibrate_pass));
+  printf("SEEK  RESULT: %s\n", pass_fail(results.seek_pass));
+
+  plus3_motor_off();
+  printf("\nRESULT: %s\n",
+         (results.recalibrate_pass && results.seek_pass) ? "PASS" : "FAIL");
 }
 
 static void test_seek_interactive(void) {
@@ -866,21 +1022,23 @@ static void test_seek_interactive(void) {
   unsigned char st3 = 0;
   unsigned char target = 0;
 
-  printf("\n== STEP SEEK ==\n");
-
   plus3_motor_on();
 
   if (!wait_drive_ready(FDC_DRIVE, 0, &st3)) {
+    ui_test_header("INTERACTIVE STEP SEEK");
     printf("FAIL: DRIVE NOT READY (ST3=0x%02X)\n", st3);
+    printf("\nRESULT: FAIL\n");
     plus3_motor_off();
     return;
   }
 
   for (;;) {
-    printf("TRACK %u\n", target);
-    printf("K=UP J=DOWN Q=QUIT: ");
+    ui_test_header("INTERACTIVE STEP SEEK");
+    printf("TRACK: %u\n", target);
+    printf("CONTROLS: K=UP J=DOWN Q=QUIT\n");
+    printf("LAST ST0=0x%02X PCN=%u\n", st0, pcn);
+    printf("\nRESULT: ACTIVE\n");
     int ch = read_key_blocking();
-    printf("\n");
     ch = toupper((unsigned char)ch);
 
     switch (ch) {
@@ -892,24 +1050,30 @@ static void test_seek_interactive(void) {
         break;
       case 'Q':
         plus3_motor_off();
+        ui_test_header("INTERACTIVE STEP SEEK");
+        printf("TRACK: %u\n", target);
+        printf("LAST ST0=0x%02X PCN=%u\n", st0, pcn);
+        printf("\nRESULT: STOPPED\n");
         return;
       default:
         break;
     }
 
     if (!cmd_seek(FDC_DRIVE, 0, target)) {
+      ui_test_header("INTERACTIVE STEP SEEK");
       printf("FAIL: seek cmd\n");
+      printf("\nRESULT: FAIL\n");
       plus3_motor_off();
       return;
     }
 
     if (!wait_seek_complete(FDC_DRIVE, &st0, &pcn)) {
+      ui_test_header("INTERACTIVE STEP SEEK");
       printf("FAIL: wait timeout\n");
+      printf("\nRESULT: FAIL\n");
       plus3_motor_off();
       return;
     }
-
-    printf("SenseInt: ST0=0x%02X, PCN=%u\n", st0, pcn);
   }
 }
 
@@ -917,62 +1081,48 @@ static void test_read_id(int interactive) {
   unsigned char st0 = 0, st1 = 0, st2 = 0, c = 0, h = 0, r = 0, n = 0;
   unsigned char st3 = 0;
   unsigned char ok;
-  unsigned char done = 0;
+  (void)interactive;
 
-  while (!done) {
-    printf("\n== READ ID ==\n");
-    printf("NEEDS READABLE DISK\n");
+  ui_test_header("READ ID ON TRACK 0");
+  printf("MEDIA: READABLE DISK REQUIRED\n");
 
-    plus3_motor_on();
+  plus3_motor_on();
 
-    if (!wait_drive_ready(FDC_DRIVE, 0, &st3)) {
-      printf("READ ID\n");
-      printf("ST0=0x08\n");
-      printf("ST1=0x00\n");
-      printf("ST2=0x00\n");
-      printf("CHRN: INVALID\n");
-      printf("REASON: DRIVE NOT READY (ST3=0x%02X)\n", st3);
-      results.read_id_pass = 0;
-      plus3_motor_off();
-      if (!interactive) {
-        return;
-      }
-      done = retry_or_exit();
-      continue;
-    }
-
-    /* Try to get to track 0 first */
-    cmd_recalibrate(FDC_DRIVE);
-    {
-      unsigned char t0, tp;
-      wait_seek_complete(FDC_DRIVE, &t0, &tp);
-    }
-
-    ok = cmd_read_id(FDC_DRIVE, 0, &st0, &st1, &st2, &c, &h, &r, &n);
-
-    printf("READ ID\n");
-    printf("ST0=0x%02X\n", st0);
-    printf("ST1=0x%02X\n", st1);
-    printf("ST2=0x%02X\n", st2);
-    if (ok) {
-      printf("C=%u H=%u\n", c, h);
-      printf("R=%u N=%u\n", r, n);
-    } else {
-      printf("CHRN: INVALID\n");
-      printf("REASON: %s\n", read_id_failure_reason(st1, st2));
-    }
-
-    results.read_id_pass = ok;
-    printf("RESULT: %s\n", pass_fail(ok));
-
+  if (!wait_drive_ready(FDC_DRIVE, 0, &st3)) {
+    printf("ST0=0x08\n");
+    printf("ST1=0x00\n");
+    printf("ST2=0x00\n");
+    printf("CHRN: INVALID\n");
+    printf("REASON: DRIVE NOT READY (ST3=0x%02X)\n", st3);
+    results.read_id_pass = 0;
     plus3_motor_off();
-
-    if (!interactive) {
-      return;
-    }
-
-    done = retry_or_exit();
+    printf("\nRESULT: FAIL\n");
+    return;
   }
+
+  /* Try to get to track 0 first */
+  cmd_recalibrate(FDC_DRIVE);
+  {
+    unsigned char t0, tp;
+    wait_seek_complete(FDC_DRIVE, &t0, &tp);
+  }
+
+  ok = cmd_read_id(FDC_DRIVE, 0, &st0, &st1, &st2, &c, &h, &r, &n);
+
+  printf("ST0=0x%02X\n", st0);
+  printf("ST1=0x%02X\n", st1);
+  printf("ST2=0x%02X\n", st2);
+  if (ok) {
+    printf("C=%u H=%u\n", c, h);
+    printf("R=%u N=%u\n", r, n);
+  } else {
+    printf("CHRN: INVALID\n");
+    printf("REASON: %s\n", read_id_failure_reason(st1, st2));
+  }
+
+  results.read_id_pass = ok;
+  plus3_motor_off();
+  printf("\nRESULT: %s\n", pass_fail(ok));
 }
 
 static void test_read_track_data_loop(void) {
@@ -993,13 +1143,12 @@ static void test_read_track_data_loop(void) {
   unsigned char pause_step;
   unsigned char exit_now;
 
-  printf("\n== READ TRACK DATA LOOP ==\n");
-  printf("J/K=TRACK  X/BREAK=EXIT\n");
-
   plus3_motor_on();
 
   if (!wait_drive_ready(FDC_DRIVE, 0, &st3)) {
+    ui_test_header("READ TRACK DATA LOOP");
     printf("TRACK LOOP STOP. DRIVE NOT READY ST3=0x%02X\n", st3);
+    printf("\nRESULT: FAIL\n");
     plus3_motor_off();
     return;
   }
@@ -1008,27 +1157,34 @@ static void test_read_track_data_loop(void) {
     if (loop_exit_requested()) break;
     exit_now = 0;
 
+#if HEADLESS_ROM_FONT
+    if (pass_count + fail_count >= 3U) break;
+#endif
+
     if (!jk_latch && j_pressed()) {
       if (track > 0) track--;
       need_seek = 1;
       jk_latch = 1;
-      printf("TRACK %u\n", track);
     } else if (!jk_latch && k_pressed()) {
       if (track < 79) track++;
       need_seek = 1;
       jk_latch = 1;
-      printf("TRACK %u\n", track);
     } else if (!j_pressed() && !k_pressed()) {
       jk_latch = 0;
     }
+
+    ui_test_header("READ TRACK DATA LOOP");
+    printf("TRACK: %u\n", track);
+    printf("CONTROLS: J/K TRACK  ENTER/X EXIT\n");
+    printf("PASS: %u\n", pass_count);
+    printf("FAIL: %u\n", fail_count);
 
     if (need_seek) {
       if (!cmd_seek(FDC_DRIVE, 0, track) ||
           !wait_seek_complete(FDC_DRIVE, &st0, &c)) {
         fail_count++;
-        printf("FAIL #%u\n", fail_count);
-        printf("SEEK T=%u\n", track);
-        printf("ST0=0x%02X\n", st0);
+        printf("LAST: SEEK FAIL T=%u ST0=0x%02X\n", track, st0);
+        printf("\nRESULT: FAIL\n");
         delay_ms(20);
         continue;
       }
@@ -1037,12 +1193,10 @@ static void test_read_track_data_loop(void) {
 
     if (!cmd_read_id(FDC_DRIVE, 0, &st0, &st1, &st2, &c, &h, &r, &n)) {
       fail_count++;
-      printf("FAIL #%u\n", fail_count);
-      printf("RID T=%u\n", track);
-      printf("ST0=0x%02X\n", st0);
-      printf("ST1=0x%02X\n", st1);
-      printf("ST2=0x%02X\n", st2);
-      printf("%s\n", read_id_failure_reason(st1, st2));
+      printf("LAST: RID FAIL T=%u ST0=0x%02X ST1=0x%02X ST2=0x%02X\n", track,
+             st0, st1, st2);
+      printf("REASON: %s\n", read_id_failure_reason(st1, st2));
+      printf("\nRESULT: FAIL\n");
       delay_ms(20);
       continue;
     }
@@ -1050,8 +1204,8 @@ static void test_read_track_data_loop(void) {
     data_len = sector_size_from_n(n);
     if (data_len == 0 || data_len > sizeof(sector_data)) {
       fail_count++;
-      printf("FAIL #%u\n", fail_count);
-      printf("RID N=%u BAD\n", n);
+      printf("LAST: RID N=%u BAD\n", n);
+      printf("\nRESULT: FAIL\n");
       delay_ms(20);
       continue;
     }
@@ -1059,13 +1213,10 @@ static void test_read_track_data_loop(void) {
     if (!cmd_read_data(FDC_DRIVE, h, c, h, r, n, &rd0, &rd1, &rd2, &rc, &rh,
                        &rr, &rn, sector_data, data_len)) {
       fail_count++;
-      printf("FAIL #%u\n", fail_count);
-      printf("RD T=%u\n", track);
-      printf("CHRN=%u/%u/%u/%u\n", c, h, r, n);
-      printf("ST0=0x%02X\n", rd0);
-      printf("ST1=0x%02X\n", rd1);
-      printf("ST2=0x%02X\n", rd2);
-      printf("%s\n", read_id_failure_reason(rd1, rd2));
+      printf("LAST: READ FAIL T=%u CHRN=%u/%u/%u/%u\n", track, c, h, r, n);
+      printf("ST0=0x%02X ST1=0x%02X ST2=0x%02X\n", rd0, rd1, rd2);
+      printf("REASON: %s\n", read_id_failure_reason(rd1, rd2));
+      printf("\nRESULT: FAIL\n");
       delay_ms(20);
       continue;
     }
@@ -1073,13 +1224,12 @@ static void test_read_track_data_loop(void) {
     checksum = 0;
     for (i = 0; i < data_len; i++) checksum += sector_data[i];
 
-    pass_count++;
-    printf("PASS #%u\n", pass_count);
-    printf("T=%u\n", track);
-    printf("C=%u H=%u\n", c, h);
-    printf("R=%u N=%u\n", r, n);
-    printf("BYTES=%u\n", data_len);
-    printf("SUM=0x%04X\n", (unsigned int)(checksum & 0xFFFF));
+        pass_count++;
+        printf("PASS #%u\n", pass_count);
+        printf("T=%u C=%u H=%u R=%u N=%u\n", track, c, h, r, n);
+        printf("BYTES=%u\n", data_len);
+        printf("SUM=0x%04X\n", (unsigned int)(checksum & 0xFFFF));
+        printf("\nRESULT: PASS\n");
 
     /* Short pacing gives keyboard scans time without stalling diagnostics. */
     for (pause_step = 0; pause_step < READ_LOOP_PAUSE_STEPS; pause_step++) {
@@ -1093,7 +1243,11 @@ static void test_read_track_data_loop(void) {
   }
 
   plus3_motor_off();
-  printf("TRACK LOOP STOP. PASS=%u FAIL=%u\n", pass_count, fail_count);
+  ui_test_header("READ TRACK DATA LOOP");
+  printf("STOPPED\n");
+  printf("PASS: %u\n", pass_count);
+  printf("FAIL: %u\n", fail_count);
+  printf("\nRESULT: STOPPED\n");
 }
 
 static void test_rpm_checker(void) {
@@ -1111,13 +1265,12 @@ static void test_rpm_checker(void) {
   unsigned char st3 = 0;
   unsigned char i;
 
-  printf("\n== DISK RPM CHECK ==\n");
-  printf("NEEDS READABLE ID. X/BREAK=EXIT\n");
-
   plus3_motor_on();
 
   if (!wait_drive_ready(FDC_DRIVE, 0, &st3)) {
+    ui_test_header("DISK RPM CHECK LOOP");
     printf("RPM LOOP STOP. DRIVE NOT READY ST3=0x%02X\n", st3);
+    printf("\nRESULT: FAIL\n");
     plus3_motor_off();
     return;
   }
@@ -1125,23 +1278,29 @@ static void test_rpm_checker(void) {
   for (;;) {
     if (loop_exit_requested()) break;
 
+#if HEADLESS_ROM_FONT
+    if (pass_count + fail_count >= 3U) break;
+#endif
+
+    ui_test_header("DISK RPM CHECK LOOP");
+    printf("CONTROLS: ENTER/X EXIT\n");
+    printf("PASS: %u\n", pass_count);
+    printf("FAIL: %u\n", fail_count);
+
     if (!cmd_seek(FDC_DRIVE, 0, 0) || !wait_seek_complete(FDC_DRIVE, &st0, &c)) {
       fail_count++;
-      printf("FAIL #%u\n", fail_count);
-      printf("SEEK TRACK0\n");
-      printf("ST0=0x%02X\n", st0);
+      printf("LAST: SEEK TRACK0 FAIL ST0=0x%02X\n", st0);
+      printf("\nRESULT: FAIL\n");
       delay_ms(RPM_FAIL_DELAY_MS);
       continue;
     }
 
     if (!cmd_read_id(FDC_DRIVE, 0, &st0, &st1, &st2, &c, &h, &r, &n)) {
       fail_count++;
-      printf("RPM N/A #%u\n", fail_count);
-      printf("ID FAIL\n");
-      printf("ST0=0x%02X\n", st0);
-      printf("ST1=0x%02X\n", st1);
-      printf("ST2=0x%02X\n", st2);
-      printf("%s\n", read_id_failure_reason(st1, st2));
+      printf("LAST: ID FAIL ST0=0x%02X ST1=0x%02X ST2=0x%02X\n", st0, st1,
+             st2);
+      printf("REASON: %s\n", read_id_failure_reason(st1, st2));
+      printf("\nRESULT: FAIL\n");
       delay_ms(RPM_FAIL_DELAY_MS);
       continue;
     }
@@ -1166,11 +1325,12 @@ static void test_rpm_checker(void) {
 
     if (dticks == 0) {
       fail_count++;
-      printf("RPM N/A #%u\n", fail_count);
+      printf("LAST: RPM N/A\n");
       /* seen_other==0: emulator returned same sector every read (no disk rotation
        * simulation). seen_other==1: sector varied but original never came back
        * within 80 reads (genuine no-index condition on real hardware). */
-      printf("%s\n", seen_other ? "NO REV MARK" : "SAME SEC");
+      printf("REASON: %s\n", seen_other ? "NO REV MARK" : "SAME SEC");
+      printf("\nRESULT: FAIL\n");
       delay_ms(RPM_FAIL_DELAY_MS);
       continue;
     }
@@ -1178,8 +1338,8 @@ static void test_rpm_checker(void) {
     period_ms = (unsigned int)dticks * 20U;
     if (period_ms == 0) {
       fail_count++;
-      printf("FAIL #%u\n", fail_count);
-      printf("RPM PERIOD BAD\n");
+      printf("LAST: RPM PERIOD BAD\n");
+      printf("\nRESULT: FAIL\n");
       delay_ms(RPM_FAIL_DELAY_MS);
       continue;
     }
@@ -1190,16 +1350,40 @@ static void test_rpm_checker(void) {
     printf("VALUE=%u\n", rpm);
     printf("PERIOD=%ums\n", period_ms);
     printf("STATE=%s\n", (rpm >= 285U && rpm <= 315U) ? "OK" : "OUT-OF-RANGE");
+    printf("\nRESULT: PASS\n");
     delay_ms(RPM_LOOP_DELAY_MS);
   }
 
   plus3_motor_off();
-  printf("RPM LOOP STOP. OK=%u FAIL=%u\n", pass_count, fail_count);
+  ui_test_header("DISK RPM CHECK LOOP");
+  printf("STOPPED\n");
+  printf("OK: %u\n", pass_count);
+  printf("FAIL: %u\n", fail_count);
+  printf("\nRESULT: STOPPED\n");
 }
 
 /* -------------------------------------------------------------------------- */
 /* UI                                                                         */
 /* -------------------------------------------------------------------------- */
+
+typedef struct {
+  char key;
+  const char* label;
+} MenuItem;
+
+static const MenuItem menu_items[] = {
+    {'1', "Motor and drive status"},
+    {'2', "Drive read ID probe"},
+    {'3', "Recalibrate and seek track 2"},
+    {'4', "Interactive step seek"},
+    {'5', "Read ID on track 0"},
+    {'6', "Read track data loop"},
+    {'7', "Disk RPM check loop"},
+    {'A', "Run all core tests"},
+    {'R', "Show report card"},
+    {'C', "Clear stored results"},
+    {'Q', "Quit"},
+};
 
 static void print_results(void) {
   unsigned char total;
@@ -1222,49 +1406,57 @@ static void print_results(void) {
   printf("] %u/5 PASS\n", total);
 }
 
-static void run_all_tests(void) {
+static void run_all_tests(unsigned char human_mode) {
   ui_clear_screen();
   memset(&results, 0, sizeof(results));
   test_motor_and_drive_status(0);
+  if (human_mode) delay_ms(1200);
+  test_read_id_probe();
+  if (human_mode) delay_ms(1200);
   test_recal_seek_track2(0);
+  if (human_mode) delay_ms(1200);
   test_read_id(0);
+  if (human_mode) delay_ms(1200);
   print_results();
   press_any_key(1);
 }
 
-static void menu_print(void) {
+static unsigned char menu_item_count(void) {
+  return (unsigned char)(sizeof(menu_items) / sizeof(menu_items[0]));
+}
+
+static char menu_key_for_index(unsigned char index) {
+  if (index >= menu_item_count()) return 'Q';
+  return menu_items[index].key;
+}
+
+static void menu_print_with_selection(unsigned char selected_index) {
+  unsigned int i;
   unsigned char total = pass_count();
   char status_line[29];
 
-  printf("\n");
-  printf("+------------------------------+\n");
-  printf("|      ZX +3 DISK TESTER      |\n");
-  printf("+------------------------------+\n");
+  printf(" ZX +3 DISK TESTER\n");
   if (total == 0) {
     strcpy(status_line, "STATUS: NO TESTS RUN");
   } else {
     sprintf(status_line, "STATUS: %u/5 PASS", total);
   }
-  printf("| %-28s |\n", status_line);
-  printf("+------------------------------+\n");
-  printf("| 1 MOTOR AND DRIVE STATUS    |\n");
-  printf("| 2 DRIVE READ ID PROBE       |\n");
-  printf("| 3 RECALIBRATE AND SEEK      |\n");
-  printf("|   TRACK 2                   |\n");
-  printf("| 4 INTERACTIVE STEP SEEK     |\n");
-  printf("| 5 READ ID ON TRACK 0        |\n");
-  printf("| 6 READ TRACK DATA LOOP      |\n");
-  printf("| 7 DISK RPM CHECK LOOP       |\n");
-  printf("| A RUN ALL CORE TESTS        |\n");
-  printf("| R SHOW REPORT CARD          |\n");
-  printf("| C CLEAR STORED RESULTS      |\n");
-  printf("| Q QUIT                      |\n");
-  printf("+------------------------------+\n");
-  printf("SELECT KEY: ");
+  printf("%s\n\n", status_line);
+
+  for (i = 0; i < sizeof(menu_items) / sizeof(menu_items[0]); i++) {
+    printf(" %-29s\n", menu_items[i].label);
+  }
+
+  printf("\n");
+  printf("Q: UP  A: DOWN\n");
+  printf("ENTER: SELECT");
+  fflush(stdout);
+  ui_menu_apply_attributes(selected_index);
 }
 
 int main(void) {
   int ch;
+  unsigned char selected_menu = 0;
 
     /* Fix DivMMC font corruption and apply readable UI font. */
     init_ui_font();
@@ -1284,15 +1476,35 @@ int main(void) {
 
   for (;;) {
     ui_clear_screen();
-    menu_print();
-    ch = read_key_blocking();
+    menu_print_with_selection(selected_menu);
+    ch = read_menu_key_blocking();
     printf("\n");
+
+    if (ch == MENU_KEY_UP) {
+      if (selected_menu > 0) {
+        selected_menu--;
+      }
+      continue;
+    }
+
+    if (ch == MENU_KEY_DOWN) {
+      if (selected_menu + 1 < menu_item_count()) {
+        selected_menu++;
+      }
+      continue;
+    }
+
+    if (ch == '\n') {
+      ch = menu_key_for_index(selected_menu);
+    }
+
     ch = toupper((unsigned char)ch);
 
     switch (ch) {
       case '1':
         ui_clear_screen();
-        test_motor_and_drive_status(1);
+        test_motor_and_drive_status(0);
+        press_any_key(1);
         break;
       case '2':
         ui_clear_screen();
@@ -1301,27 +1513,33 @@ int main(void) {
         break;
       case '3':
         ui_clear_screen();
-        test_recal_seek_track2(1);
+        test_recal_seek_track2(0);
+        printf("\nX OR BREAK=EXIT\n");
+        read_key_blocking();
         break;
       case '4':
         ui_clear_screen();
         test_seek_interactive();
+        press_any_key(1);
         break;
       case '5':
         ui_clear_screen();
-        test_read_id(1);
+        test_read_id(0);
+        press_any_key(1);
         break;
       case '6':
         ui_clear_screen();
         test_read_track_data_loop();
+        press_any_key(1);
         break;
       case '7':
         ui_clear_screen();
         test_rpm_checker();
+        press_any_key(1);
         break;
       case 'A':
         ui_clear_screen();
-        run_all_tests();
+        run_all_tests(1);
         break;
       case 'R':
         ui_clear_screen();
