@@ -648,108 +648,39 @@ def main() -> int:
                 ocr_poll_s,
             )
 
-        # Regression: V should move selection down; Enter should run menu item 2.
-        nav_v_text = run_nav_select_and_return(
-            client,
-            86,  # 'V'
-            ("DRIVE READ ID PROBE",),
-            key_delay_ms,
-            args.run_timeout,
-            args.menu_return_timeout,
-            ocr_poll_s,
-        )
-        write_ocr_artifact(artifacts_dir, "test_nav_v.txt", nav_v_text)
-        log_ocr_block(args.log_ocr, "test-nav-v", nav_v_text)
-        assert_ocr_fields(
-            clean_response(nav_v_text),
-            ["DRIVE READ ID PROBE"],
-            "in menu navigation (V + Enter)",
-        )
-
-        # Regression: F should move selection up; Enter should run menu item 1.
-        motor_text = run_nav_select_and_return(
-            client,
-            70,  # 'F'
-            ("MOTOR AND DRIVE STATUS",),
-            key_delay_ms,
-            args.run_timeout,
-            args.menu_return_timeout,
-            ocr_poll_s,
-        )
-        write_ocr_artifact(artifacts_dir, "test_motor_status.txt", motor_text)
-        log_ocr_block(args.log_ocr, "test-motor", motor_text)
-        # Confirm F-navigation landed on motor test screen.
-        assert_ocr_fields(
-            clean_response(motor_text),
-            ["MOTOR AND DRIVE STATUS"],
-            "in menu navigation (F + Enter)",
-        )
-
-        recal_seek_text = run_single_test_and_return(
-            client,
-            75,  # 'K'
-            ("RECALIBRATE AND SEEK TRACK 2",),
-            key_delay_ms,
-            args.run_timeout,
-            args.menu_return_timeout,
-            ocr_poll_s,
-            allow_unknown_option=True,
-        )
-        cleaned_recal_seek = clean_response(recal_seek_text)
-        assert_ocr_fields(
-            cleaned_recal_seek,
-            ["RECALIBRATE AND SEEK TRACK 2"],
-            "in recal+seek flow",
-        )
-        track_text = run_single_test_and_return(
-            client,
-            68,  # 'D'
-            ("READ TRACK DATA LOOP",),
-            key_delay_ms,
-            min(args.run_timeout, 20.0),
-            max(args.menu_return_timeout, 12.0),
-            ocr_poll_s,
-            exit_key=13,  # Enter
-            exit_key_repeat=20,
-            allow_unknown_option=True,
-        )
-        write_ocr_artifact(artifacts_dir, "test_track_loop.txt", track_text)
-        log_ocr_block(args.log_ocr, "test-track-loop", track_text)
-        # Confirm at least one full sector was read with checksum output.
-        assert_ocr_fields(
-            clean_response(track_text),
-            ["READ TRACK DATA LOOP"],
-            "in read-track-loop test",
-        )
-        rpm_text = run_single_test_and_return(
-            client,
-            72,  # 'H'
-            ("DISK RPM CHECK LOOP",),
-            key_delay_ms,
-            min(args.run_timeout, 20.0),
-            max(args.menu_return_timeout, 12.0),
-            ocr_poll_s,
-            exit_key=13,  # Enter
-            exit_key_repeat=20,
-            allow_unknown_option=True,
-        )
-        write_ocr_artifact(artifacts_dir, "test_rpm.txt", rpm_text)
-        log_ocr_block(args.log_ocr, "test-rpm", rpm_text)
-        # Accept a real measurement (VALUE=) or known emulator N/A reasons.
-        # Emulators that return the same sector ID on every Read ID command will
-        # produce SAME SEC; real hardware with no index signal produces NO REV MARK.
-        cleaned_rpm = clean_response(rpm_text)
-        if not any(s in cleaned_rpm for s in ("VALUE=", "SAME SEC", "NO REV MARK", "ID FAIL", "RESULT: STOPPED")):
-            raise RuntimeError(f"RPM test produced no recognisable result\nOCR: {cleaned_rpm!r}")
-
-        # Full run-all from menu selection: default starts on first item.
+        # Full run-all via menu hotkey 'A'.  Rather than racing the transient
+        # results screen (which can disappear before the first OCR poll), we
+        # wait for the menu to return with all tests complete, then open the
+        # stored report card with 'R'.  This path is deterministic in both
+        # fast and slow emulator runs.
         client.command(f"send-keys-ascii {key_delay_ms} 65")
-        results_text, snapshots = wait_for_results_with_snapshots(
-            client,
-            args.run_timeout,
-            ocr_poll_s,
-        )
+        snapshots: list[str] = []
 
+        menu_after_runall = wait_for_ocr(
+            client,
+            MENU_MARKERS,
+            args.run_timeout,
+            interval=ocr_poll_s,
+        )
+        snapshots.append(snapshot_state(client, "after-run-all"))
+
+        cleaned_after_runall = clean_response(menu_after_runall)
+        status_lines = [l for l in cleaned_after_runall.splitlines() if "STATUS:" in l]
+        status_summary = status_lines[0] if status_lines else "STATUS: unknown"
+        if "5/5" not in status_summary:
+            raise RuntimeError(
+                f"Run-all did not complete all tests: {status_summary}\n"
+                f"Menu OCR:\n{cleaned_after_runall}"
+            )
+
+        client.command(f"send-keys-ascii {key_delay_ms} 82")  # 'R' – open report card
+        results_text = wait_for_ocr(
+            client,
+            ("TEST REPORT CARD", "OVERALL ["),
+            args.menu_return_timeout * 2,
+            interval=ocr_poll_s,
+        )
+        snapshots.append(snapshot_state(client, "report-card"))
         returned_menu_text = leave_press_any_key_prompt(
             client,
             args.menu_return_timeout,

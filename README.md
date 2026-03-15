@@ -91,7 +91,6 @@ The harness loads the tester program from the TAP file and mounts a DSK image fo
 - `--compact-ui off` – Build with OCR-safe default font (default)
 - `--log-ocr` – Print key OCR captures to stdout for CI/build logs
 - `--ocr-artifacts-dir out/smoke-artifacts` – Write OCR snapshots and text captures
-- `--menu-screenshot out/smoke-artifacts/menu-screen.bmp` – Save menu screenshot (bmp/scr/pbm)
 - `--machine P340` – Use ZX +3, 40-track drive (default)
 - `--run-timeout 120` – Maximum seconds to wait for test completion
 - `--no-build` – Skip build and use existing TAP
@@ -118,7 +117,7 @@ The harness will:
 Notes:
 - `save-screen` via ZRCP supports `bmp`, `scr`, and `pbm` output formats.
 - Default loader wait was reduced to make startup faster while keeping fallback logic.
-- CI captures both a default OCR-safe menu screenshot and a compact-font menu screenshot for human review.
+- CI captures OCR artifacts from a full smoke run plus a compact menu-only capture for human review.
 
 ## Read ID Result Notes
 
@@ -166,10 +165,12 @@ docker run --rm -v $(pwd):/workspace zx3-disk-test:latest \
 
 ### GitHub Actions
 
-The repository includes two GitHub Actions workflows:
+The repository includes three GitHub Actions workflows:
 1. `.github/workflows/toolchain-image.yml` builds and publishes a prebuilt toolchain image to GHCR when the Dockerfile changes
 2. `.github/workflows/smoke-test.yml` pulls that prebuilt image for normal CI runs and only falls back to a local build if the image is missing
-3. The smoke test then runs on every push and PR and reports pass/fail status
+3. `.github/workflows/manual-release.yml` supports release packaging/tag flow
+
+The smoke workflow runs on pushes and PRs to `main`, `master`, and `develop`, executes a full headless smoke run, then executes a compact menu-only capture without rebuilding.
 
 The workflow uses `--headless` mode to run without a display.
 

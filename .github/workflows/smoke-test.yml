@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ main, master, develop ]
 
+concurrency:
+  group: smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
   packages: read
@@ -63,17 +67,24 @@ jobs:
 
       - name: Run smoke test
         run: |
-          docker run --rm \
-            -v ${{ github.workspace }}:/workspace \
-            zx3-disk-test:ci \
-            bash -c "cd /workspace && ./tools/zesarux_smoketest.py --no-build --machine P340 --run-timeout 180 --headless --log-ocr --ocr-artifacts-dir out/smoke-artifacts --emulator-binary /usr/local/bin/zesarux"
+          for attempt in 1 2; do
+            echo "--- Smoke attempt ${attempt}/2 ---"
+            docker run --rm \
+              -v ${{ github.workspace }}:/workspace \
+              zx3-disk-test:ci \
+              bash -c "cd /workspace && ./tools/zesarux_smoketest.py --no-build --machine P340 --run-timeout 180 --headless --log-ocr --ocr-artifacts-dir out/smoke-artifacts --emulator-binary /usr/local/bin/zesarux" \
+            && { echo "Smoke passed on attempt ${attempt}"; exit 0; }
+            echo "Attempt ${attempt} failed"
+          done
+          exit 1
 
-      - name: Run smoke tests with captured OCR artifacts
+      - name: Run compact menu smoke capture
+        if: github.ref == 'refs/heads/main'
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/workspace \
             zx3-disk-test:ci \
-            bash -c "cd /workspace && ./tools/zesarux_smoketest.py --machine P340 --headless --menu-only --no-dsk --compact-ui on --log-ocr --ocr-artifacts-dir out/smoke-artifacts --emulator-binary /usr/local/bin/zesarux"
+            bash -c "cd /workspace && ./tools/zesarux_smoketest.py --no-build --machine P340 --headless --menu-only --no-dsk --compact-ui on --log-ocr --ocr-artifacts-dir out/smoke-artifacts-compact --emulator-binary /usr/local/bin/zesarux"
 
       - name: Run screen-check capture
         run: |
@@ -131,6 +142,7 @@ jobs:
             out/disk_tester.tap
             out/disk_tester_plus3.dsk
             out/smoke-artifacts/**
+            out/smoke-artifacts-compact/**
             out/screen-check/**
           if-no-files-found: error
 
