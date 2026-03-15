@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Capture before/during/after screenshots to verify screen-clear behaviour."""
+import argparse
 import sys
 import time
 from pathlib import Path
@@ -18,25 +19,41 @@ def shot(client: sm.ZrcpClient, path: Path) -> None:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Capture staged UI screenshots through ZEsarUX")
+    parser.add_argument("--port", type=int, default=10120)
+    parser.add_argument("--machine", default="P340")
+    parser.add_argument("--emulator-speed", type=int, default=300)
+    parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--gui-driver", default="cocoa")
+    parser.add_argument("--gui-zoom", type=int, default=2)
+    parser.add_argument("--emulator-binary", type=Path, default=sm.DEFAULT_EMULATOR)
+    args = parser.parse_args()
+
     repo = Path(__file__).resolve().parents[1]
     out = repo / "out" / "screen-check"
     out.mkdir(parents=True, exist_ok=True)
     tap = (repo / "out" / "disk_tester.tap").resolve()
 
+    if not args.emulator_binary.exists():
+        raise RuntimeError(f"emulator binary not found: {args.emulator_binary}")
+
+    video_driver = None if args.headless else args.gui_driver
+    zoom = None if args.headless else max(1, args.gui_zoom)
+
     proc = sm.start_emulator(
-        binary=sm.DEFAULT_EMULATOR,
-        port=10120,
-        machine="P340",
-        emulator_speed=300,
-        video_driver="cocoa",
-        zoom=2,
-        headless=False,
+        binary=args.emulator_binary,
+        port=args.port,
+        machine=args.machine,
+        emulator_speed=args.emulator_speed,
+        video_driver=video_driver,
+        zoom=zoom,
+        headless=args.headless,
     )
     c = None
     try:
-        if not sm.wait_for_port("127.0.0.1", 10120, 20.0):
+        if not sm.wait_for_port("127.0.0.1", args.port, 20.0):
             raise RuntimeError("port did not open")
-        c = sm.ZrcpClient("127.0.0.1", 10120, timeout=5.0)
+        c = sm.ZrcpClient("127.0.0.1", args.port, timeout=5.0)
         c.command("hard-reset-cpu")
         time.sleep(0.3)
         c.command(f"smartload {tap}")

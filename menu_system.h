@@ -1,0 +1,16 @@
+#pragma once
+
+typedef struct {
+  char key;
+  const char *label;
+  unsigned char hot_col;
+} MenuItem;
+
+#define MENU_KEY_UP (-2)
+#define MENU_KEY_DOWN (-3)
+
+const MenuItem *menu_items(void);
+unsigned char menu_item_count(void);
+char menu_key_for_index(unsigned char index);
+unsigned char menu_index_for_key(char key, unsigned char *found);
+int read_menu_key_blocking(void);
