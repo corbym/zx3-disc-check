@@ -103,8 +103,9 @@ static void delay_us_approx(unsigned int us) {
     }
   }
 }
-#define RPM_LOOP_DELAY_MS 80U
-#define RPM_FAIL_DELAY_MS 80U
+#define RPM_LOOP_DELAY_MS 180U
+#define RPM_FAIL_DELAY_MS 450U
+#define RPM_EXIT_ARM_DELAY_MS 400U
 /*
  * Real +3 drives vary with age; a slightly longer spin-up improves reliability
  * on older mechanics without affecting emulator runs materially.
@@ -1385,6 +1386,11 @@ static unsigned char loop_exit_requested(void) {
   return 0;
 }
 
+static unsigned char rpm_exit_armed(unsigned short loop_start_tick) {
+  return (unsigned char)((unsigned short)(frame_ticks() - loop_start_tick) >=
+                         (unsigned short)(RPM_EXIT_ARM_DELAY_MS / 20U));
+}
+
 /* -------------------------------------------------------------------------- */
 /* Low-level I/O                                                              */
 /* -------------------------------------------------------------------------- */
@@ -1739,7 +1745,7 @@ static void test_motor_and_drive_status(int interactive) {
   press_any_key(selected_test_prompt_mode(interactive));
 }
 
-static void test_read_id_probe(void) {
+static void test_read_id_probe(int interactive) {
   unsigned char st3 = 0;
   unsigned char st0 = 0, pcn = 0;
   unsigned char rid_ok = 0;
@@ -1770,14 +1776,14 @@ static void test_read_id_probe(void) {
     strcpy(line5, "FAULT : ---");
     strcpy(line6, "ID    : WAITING");
     ui_render_text_screen("DRIVE READ ID PROBE",
-                          single_shot_test_controls(0),
+                          single_shot_test_controls(interactive),
                           lines,
                           6,
                           "RESULT: READY");
     delay_ms(TEST_CARD_STATE_DELAY_MS);
     strcpy(line6, "ID    : PROBING");
     ui_render_text_screen("DRIVE READ ID PROBE",
-                          single_shot_test_controls(0),
+                          single_shot_test_controls(interactive),
                           lines,
                           6,
                           "RESULT: RUNNING");
@@ -1817,11 +1823,11 @@ static void test_read_id_probe(void) {
     sprintf(line6, "ID    : %s", read_id_failure_reason(st1, st2));
   }
   ui_render_text_screen("DRIVE READ ID PROBE",
-                        single_shot_test_controls(0),
+                        single_shot_test_controls(interactive),
                         lines,
                         6,
                         results.sense_drive_pass ? "RESULT: PASS" : "RESULT: FAIL");
-  press_any_key(selected_test_prompt_mode(0));
+  press_any_key(selected_test_prompt_mode(interactive));
 }
 
 static void test_recal_seek_track2(int interactive) {
@@ -2316,29 +2322,30 @@ static void test_rpm_checker(void) {
   unsigned char st3 = 0;
   unsigned char i;
   unsigned char exit_now = 0;
+  unsigned short loop_start_tick = 0;
 
   last_test_failed = 0;
 
   plus3_motor_on();
-
-  if (!wait_drive_ready(FDC_DRIVE, 0, &st3)) {
-    ui_render_rpm_loop_screen(0,
-                              0,
-                              pass_count,
-                              fail_count,
-                              "LAST  : DRIVE NOT READY",
-                              "INFO  : CHECK MEDIA",
-                              "RESULT: FAIL");
-    plus3_motor_off();
-    return;
-  }
+  loop_start_tick = frame_ticks();
 
   for (;;) {
-    if (loop_exit_requested()) break;
+    if (rpm_exit_armed(loop_start_tick) && loop_exit_requested()) break;
 
 #if HEADLESS_ROM_FONT
     if (pass_count + fail_count >= 3U) break;
 #endif
+
+    if (!wait_drive_ready(FDC_DRIVE, 0, &st3)) {
+      fail_count++;
+      render_rpm_loop_fail(rpm,
+                           pass_count,
+                           fail_count,
+                           "LAST  : DRIVE NOT READY",
+                           "INFO  : CHECK MEDIA");
+      delay_ms(RPM_FAIL_DELAY_MS);
+      continue;
+    }
 
     if (!cmd_seek(FDC_DRIVE, 0, 0) || !wait_seek_complete(FDC_DRIVE, &st0, &c)) {
       fail_count++;
@@ -2366,7 +2373,7 @@ static void test_rpm_checker(void) {
     exit_now = 0;
 
     for (i = 0; i < 120; i++) {
-      if (loop_exit_requested()) {
+      if (rpm_exit_armed(loop_start_tick) && loop_exit_requested()) {
         exit_now = 1;
         break;
       }
@@ -2459,7 +2466,7 @@ static void run_all_tests(unsigned char human_mode) {
 
   set_report_status(REPORT_STATUS_RUNNING);
   if (human_mode) delay_ms(RUN_ALL_RUNNING_DELAY_MS);
-  test_read_id_probe();
+  test_read_id_probe(0);
   set_report_status(REPORT_STATUS_COMPLETE);
   ui_render_report_card();
   if (human_mode) delay_ms(RUN_ALL_RESULT_DELAY_MS);
@@ -2555,7 +2562,7 @@ int main(void) {
         menu_dirty = 1;
         break;
       case 'P':
-        test_read_id_probe();
+        test_read_id_probe(1);
         wait_for_menu_after_failure();
         menu_dirty = 1;
         break;

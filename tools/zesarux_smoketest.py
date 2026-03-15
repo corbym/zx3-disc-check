@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -145,6 +146,17 @@ def fail_fast_ui_source_regressions(repo_root: Path) -> None:
         "#define RUN_ALL_RESULT_DELAY_MS 1800U",
         "ui_render_cached_text_row",
         "ui_style_screen_text_row",
+        # Drive read ID probe must carry an explicit interactive parameter, be called
+        # with 1 from the menu (solo user selection) and 0 from run_all.  This
+        # prevents regression to "AUTO RETURN MENU" / no-wait when the test is
+        # chosen directly from the menu.
+        "static void test_read_id_probe(int interactive)",
+        "test_read_id_probe(1);",
+        "test_read_id_probe(0);",
+        # RPM loop should not auto-exit on transient not-ready and should arm
+        # ENTER/X exit only after a short debounce window.
+        "rpm_exit_armed(loop_start_tick) && loop_exit_requested()",
+        "LAST  : DRIVE NOT READY",
     )
     missing = [snippet for snippet in required_snippets if snippet not in text]
     if missing:
@@ -468,6 +480,111 @@ def run_track_loop_status_regression_check(
     )
 
     return initial_text, populated_text
+
+
+def run_rpm_loop_status_regression_check(
+    client: ZrcpClient,
+    key_delay_ms: int,
+    open_timeout: float,
+    sample_timeout: float,
+    linger_timeout: float,
+    menu_return_timeout: float,
+    ocr_poll_s: float,
+) -> tuple[str, str]:
+    title = "DISK RPM CHECK LOOP"
+
+    # Move deterministically to RPM row, then use Enter selection.
+    for _ in range(8):
+        client.command(f"send-keys-ascii {key_delay_ms} 70")  # 'F' up
+        time.sleep(max(0.03, ocr_poll_s / 2.0))
+    for _ in range(6):
+        client.command(f"send-keys-ascii {key_delay_ms} 86")  # 'V' down
+        time.sleep(max(0.03, ocr_poll_s / 2.0))
+
+    # Trigger selection once with Enter; avoid repeated Enter because that can
+    # be interpreted as loop-exit input right after the test opens.
+    client.command(f"send-keys-ascii {key_delay_ms} 13")
+
+    open_deadline = time.time() + open_timeout
+    initial_text = ""
+    while time.time() < open_deadline:
+        initial_text = client.ocr()
+        cleaned = clean_response(initial_text)
+        if title in cleaned and "RPM   :" in cleaned and "RESULT:" in cleaned:
+            break
+        time.sleep(ocr_poll_s)
+    else:
+        raise TimeoutError(
+            "Timed out waiting for selected RPM loop status screen\n"
+            f"Last OCR:\n{initial_text}"
+        )
+
+    # Regression: selected RPM test should not bounce straight back to menu.
+    linger_deadline = time.time() + max(0.3, linger_timeout)
+    while time.time() < linger_deadline:
+        current = client.ocr()
+        cleaned = clean_response(current)
+        if all(marker in cleaned for marker in MENU_MARKERS):
+            raise RuntimeError("Selected RPM test returned to menu before explicit exit")
+        time.sleep(ocr_poll_s)
+
+    sample_deadline = time.time() + sample_timeout
+    sampled_text = ""
+    while time.time() < sample_deadline:
+        sampled_text = client.ocr()
+        cleaned = clean_response(sampled_text)
+        if all(marker in cleaned for marker in MENU_MARKERS):
+            raise RuntimeError("Selected RPM test returned to menu before RPM sample was captured")
+        has_numeric_rpm = bool(re.search(r"RPM\s*:\s*[0-9]{2,3}", cleaned))
+        has_populated_status = (
+            title in cleaned
+            and "PASS  :" in cleaned
+            and "FAIL  :" in cleaned
+            and "LAST  :" in cleaned
+            and "INFO  :" in cleaned
+            and "RESULT:" in cleaned
+        )
+        if has_numeric_rpm or has_populated_status:
+            break
+        time.sleep(ocr_poll_s)
+    else:
+        raise TimeoutError(
+            "Timed out waiting for RPM loop status/sample frame\n"
+            f"Last OCR:\n{sampled_text}"
+        )
+
+    returned_menu_text = ""
+    leave_deadline = time.time() + menu_return_timeout
+    while time.time() < leave_deadline:
+        client.command(f"send-keys-ascii {key_delay_ms} 88")  # 'X'
+        current = client.ocr()
+        cleaned_current = clean_response(current)
+        if "PRESS ANY KEY" in current:
+            returned_menu_text = leave_press_any_key_prompt(
+                client,
+                menu_return_timeout,
+                key_delay_ms,
+                ocr_poll_s,
+            )
+            break
+        if "PRESS ENTER" in cleaned_current or "FAIL - PRESS ENTER FOR MENU" in cleaned_current:
+            client.command(f"send-keys-ascii {key_delay_ms} 13")
+            returned_menu_text = wait_for_ocr(
+                client,
+                MENU_MARKERS,
+                menu_return_timeout,
+                interval=ocr_poll_s,
+            )
+            break
+        if all(marker in current for marker in MENU_MARKERS):
+            returned_menu_text = current
+            break
+        time.sleep(ocr_poll_s)
+    if not returned_menu_text:
+        raise TimeoutError("Timed out returning to menu after selected RPM loop test")
+
+    assert_no_unknown_option(clean_response(returned_menu_text), "after selected RPM regression")
+    return initial_text, sampled_text
 
 
 def assert_stable_selected_test_frame(
@@ -839,6 +956,29 @@ def main() -> int:
         default=12.0,
         help="Timeout waiting for stopped track loop status page",
     )
+    parser.add_argument(
+        "--check-rpm-loop-status",
+        action="store_true",
+        help="Run a regression check that verifies selected RPM loop stays visible and reaches a populated status/sample frame",
+    )
+    parser.add_argument(
+        "--rpm-loop-open-timeout",
+        type=float,
+        default=12.0,
+        help="Timeout waiting for selected RPM loop status screen",
+    )
+    parser.add_argument(
+        "--rpm-loop-sample-timeout",
+        type=float,
+        default=12.0,
+        help="Timeout waiting for a numeric RPM sample on selected RPM loop",
+    )
+    parser.add_argument(
+        "--rpm-loop-linger-timeout",
+        type=float,
+        default=1.0,
+        help="Minimum time selected RPM loop must stay on-screen before exit",
+    )
     args = parser.parse_args()
 
     ocr_poll_s = max(0.05, args.ocr_poll_ms / 1000.0)
@@ -991,6 +1131,23 @@ def main() -> int:
                 args.menu_return_timeout,
                 ocr_poll_s,
             )
+
+        if args.check_rpm_loop_status:
+            if dsk_path is None:
+                raise RuntimeError("--check-rpm-loop-status requires a mounted DSK (omit --no-dsk)")
+            rpm_initial_text, rpm_sampled_text = run_rpm_loop_status_regression_check(
+                client,
+                key_delay_ms,
+                args.rpm_loop_open_timeout,
+                args.rpm_loop_sample_timeout,
+                args.rpm_loop_linger_timeout,
+                args.menu_return_timeout,
+                ocr_poll_s,
+            )
+            write_ocr_artifact(artifacts_dir, "selected_rpm_initial_status.txt", rpm_initial_text)
+            write_ocr_artifact(artifacts_dir, "selected_rpm_sampled_status.txt", rpm_sampled_text)
+            log_ocr_block(args.log_ocr, "selected-rpm-initial", rpm_initial_text)
+            log_ocr_block(args.log_ocr, "selected-rpm-sampled", rpm_sampled_text)
 
         # Full run-all via menu hotkey 'A'.  Rather than racing the transient
         # results screen (which can disappear before the first OCR poll), we
