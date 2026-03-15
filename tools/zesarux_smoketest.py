@@ -134,6 +134,26 @@ def fail_fast_memory_regression(
         )
 
 
+def fail_fast_ui_source_regressions(repo_root: Path) -> None:
+    source_path = repo_root / "disk_tester.c"
+    if not source_path.exists():
+        raise RuntimeError(f"Missing source file for UI regression check: {source_path}")
+
+    text = source_path.read_text(encoding="utf-8", errors="replace")
+    required_snippets = (
+        "press_any_key(selected_test_prompt_mode(interactive));",
+        "#define RUN_ALL_RESULT_DELAY_MS 1800U",
+        "ui_render_cached_text_row",
+        "ui_style_screen_text_row",
+    )
+    missing = [snippet for snippet in required_snippets if snippet not in text]
+    if missing:
+        raise RuntimeError(
+            "UI regression source check failed; expected smoke-protected snippets missing: "
+            f"{missing!r}"
+        )
+
+
 def snapshot_state(client: ZrcpClient, label: str) -> str:
     parts = [f"--- {label} ---"]
     for cmd in ("get-registers", "get-paging-state", "hexdump 5B67 8"):
@@ -450,6 +470,148 @@ def run_track_loop_status_regression_check(
     return initial_text, populated_text
 
 
+def assert_stable_selected_test_frame(
+    text: str,
+    title: str,
+    required_fields: tuple[str, ...],
+    where: str,
+) -> None:
+    cleaned = clean_response(text)
+    if title not in cleaned:
+        return
+    missing = [field for field in required_fields if field not in cleaned]
+    if missing:
+        raise RuntimeError(
+            f"Partial selected-test frame seen {where}: missing {missing!r}\nOCR:\n{cleaned}"
+        )
+
+
+def run_selected_recal_status_regression_check(
+    client: ZrcpClient,
+    key_delay_ms: int,
+    open_timeout: float,
+    run_timeout: float,
+    menu_return_timeout: float,
+    ocr_poll_s: float,
+) -> tuple[str, str, str]:
+    title = "RECALIBRATE AND SEEK TRACK 2"
+    stable_fields = ("KEYS", "RECAL :", "SEEK  :", "RESULT:")
+
+    # Move deterministically to the recal row, then use Enter.
+    for _ in range(8):
+        client.command(f"send-keys-ascii {key_delay_ms} 70")  # 'F' up
+        time.sleep(max(0.03, ocr_poll_s / 2.0))
+    for _ in range(2):
+        client.command(f"send-keys-ascii {key_delay_ms} 86")  # 'V' down
+        time.sleep(max(0.03, ocr_poll_s / 2.0))
+
+    ready_deadline = time.time() + open_timeout
+    ready_text = ""
+    last_send = 0.0
+    while time.time() < ready_deadline:
+        now = time.time()
+        if now - last_send >= 0.35:
+            client.command(f"send-keys-ascii {key_delay_ms} 13")
+            client.command(f"send-keys-ascii {key_delay_ms} 75")
+            client.command(f"send-keys-ascii {key_delay_ms} 107")
+            last_send = now
+        ready_text = client.ocr()
+        assert_stable_selected_test_frame(ready_text, title, stable_fields, "while waiting for READY")
+        cleaned = clean_response(ready_text)
+        if title in cleaned and "RESULT: READY" in cleaned and "TRACK :" in cleaned:
+            break
+        time.sleep(ocr_poll_s)
+    else:
+        raise TimeoutError(
+            "Timed out waiting for selected recal READY card\n"
+            f"Last OCR:\n{ready_text}"
+        )
+
+    running_deadline = time.time() + run_timeout
+    running_text = ""
+    while time.time() < running_deadline:
+        running_text = client.ocr()
+        assert_stable_selected_test_frame(running_text, title, stable_fields, "while waiting for RUNNING")
+        cleaned = clean_response(running_text)
+        if title in cleaned and "RESULT: RUNNING" in cleaned:
+            break
+        time.sleep(ocr_poll_s)
+    else:
+        raise TimeoutError(
+            "Timed out waiting for selected recal RUNNING card\n"
+            f"Last OCR:\n{running_text}"
+        )
+
+    final_deadline = time.time() + run_timeout
+    final_text = ""
+    while time.time() < final_deadline:
+        final_text = client.ocr()
+        assert_stable_selected_test_frame(final_text, title, stable_fields, "while waiting for final result")
+        cleaned = clean_response(final_text)
+        if (
+            title in cleaned
+            and ("RESULT: PASS" in cleaned or "RESULT: FAIL" in cleaned)
+            and "TRACK :" in cleaned
+        ):
+            break
+        time.sleep(ocr_poll_s)
+    else:
+        raise TimeoutError(
+            "Timed out waiting for selected recal final card\n"
+            f"Last OCR:\n{final_text}"
+        )
+
+    # It should stay on the final card until Enter is pressed.
+    linger_deadline = time.time() + min(0.8, menu_return_timeout)
+    while time.time() < linger_deadline:
+        current = client.ocr()
+        cleaned = clean_response(current)
+        assert_stable_selected_test_frame(current, title, stable_fields, "during final-card linger")
+        if all(marker in cleaned for marker in MENU_MARKERS):
+            raise RuntimeError("Selected recal test returned to menu before ENTER was pressed")
+        time.sleep(ocr_poll_s)
+
+    client.command(f"send-keys-ascii {key_delay_ms} 13")
+    returned_menu = wait_for_ocr(client, MENU_MARKERS, menu_return_timeout, interval=ocr_poll_s)
+    assert_no_unknown_option(clean_response(returned_menu), "after selected recal regression")
+    return ready_text, running_text, final_text
+
+
+def wait_for_menu_after_runall_with_progress(
+    client: ZrcpClient,
+    timeout: float,
+    interval: float,
+    min_report_frames: int,
+) -> tuple[str, list[str]]:
+    deadline = time.time() + timeout
+    last_text = ""
+    report_frames: list[str] = []
+    seen_report_frames: set[str] = set()
+
+    while time.time() < deadline:
+        last_text = client.ocr()
+        clean = clean_response(last_text)
+
+        if "TEST REPORT CARD" in clean and "STATUS:" in clean:
+            if clean not in seen_report_frames:
+                seen_report_frames.add(clean)
+                report_frames.append(clean)
+
+        if all(marker in clean for marker in MENU_MARKERS):
+            if len(report_frames) < min_report_frames:
+                raise RuntimeError(
+                    "Run-all pacing regression: too few intermediate report-card states observed "
+                    f"({len(report_frames)} < {min_report_frames})"
+                )
+            return last_text, report_frames
+
+        time.sleep(interval)
+
+    raise TimeoutError(
+        f"Timed out waiting for menu after run-all\nLast OCR:\n{last_text}"
+    )
+
+
 def mount_dsk_after_tap_load(
     client: ZrcpClient,
     dsk_path: Path,
@@ -698,6 +860,7 @@ def main() -> int:
         args.max_bss_uninitialized_tail,
         fail_on_backbuffer_symbols=not args.allow_screen_backbuffers,
     )
+    fail_fast_ui_source_regressions(repo_root)
 
     if args.compact_ui == "on":
         print("WARNING: --compact-ui on is intended for human display and may reduce OCR reliability", file=sys.stderr)
@@ -831,19 +994,22 @@ def main() -> int:
 
         # Full run-all via menu hotkey 'A'.  Rather than racing the transient
         # results screen (which can disappear before the first OCR poll), we
-        # wait for the menu to return with all tests complete, then open the
-        # stored report card with 'R'.  This path is deterministic in both
-        # fast and slow emulator runs.
+        # wait for the menu to return while also recording intermediate report
+        # card frames. This catches pacing regressions where cards disappear
+        # too quickly to be observed reliably.
         client.command(f"send-keys-ascii {key_delay_ms} 65")
         snapshots: list[str] = []
 
-        menu_after_runall = wait_for_ocr(
+        menu_after_runall, runall_report_frames = wait_for_menu_after_runall_with_progress(
             client,
-            MENU_MARKERS,
             args.run_timeout,
-            interval=ocr_poll_s,
+            ocr_poll_s,
+            min_report_frames=3,
         )
         snapshots.append(snapshot_state(client, "after-run-all"))
+        if artifacts_dir is not None:
+            for idx, frame in enumerate(runall_report_frames, start=1):
+                (artifacts_dir / f"runall_report_frame_{idx:02d}.txt").write_text(frame, encoding="utf-8")
 
         cleaned_after_runall = clean_response(menu_after_runall)
         status_lines = [l for l in cleaned_after_runall.splitlines() if "STATUS:" in l]
