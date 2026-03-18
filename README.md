@@ -85,13 +85,15 @@ zcc +zx -vn -clib=new -create-app disk_tester.c menu_system.c intstate.asm -o ./
 
 Requires `zesarux` on your PATH (or set `ZESARUX_BIN` to the binary path) and a working Go toolchain. If the emulator is not available the emulator-driven tests are skipped, unless `ZX3_REQUIRE_EMU_SMOKE=1` is set (used in CI to enforce they run).
 
+Smoke tests require prebuilt artifacts at `out/disk_tester.tap` and `out/disk_tester_plus3.dsk` (for example from CI build output or a prior manual `./build.sh`). If either artifact is missing, the suite fails immediately.
+
 The test suite:
-1. Builds the project (`./build.sh`)
+1. Validates required prebuilt TAP/DSK artifacts are present
 2. Starts ZEsarUX in headless +3 mode
 3. Loads the TAP file and validates the main menu appears
 4. Exercises key menu paths and validates UI responses via OCR
-5. Runs all disk tests end-to-end and checks for 5/5 PASS status
-6. Captures staged UI screenshots to `out/screen-check/` to verify screen-clear behaviour
+5. Runs all disk tests end-to-end and checks for completion status
+6. Captures staged UI screenshots to `out/screen-check/` and compares them with approved baselines in `tests/approved/screen-check/`
 7. Stops the emulator and reports results
 
 Notes:

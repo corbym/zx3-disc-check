@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -27,23 +26,6 @@ func TestMain(m *testing.M) {
 	repoRoot := filepath.Clean(filepath.Join(cwd, ".."))
 	repoRootPath = repoRoot
 
-	buildLog := "/tmp/zx3-build.log"
-	buildCmd := exec.Command("sh", "./build.sh")
-	buildCmd.Dir = repoRoot
-	buildFile, ferr := os.Create(buildLog)
-	if ferr == nil {
-		buildCmd.Stdout = buildFile
-		buildCmd.Stderr = buildFile
-	}
-	if err := buildCmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "build failed (%v); see %s\n", err, buildLog)
-		_ = buildFile.Close()
-		os.Exit(1)
-	}
-	if buildFile != nil {
-		_ = buildFile.Close()
-	}
-
 	tapPath, err = absPathFromRepo(repoRoot, "out/disk_tester.tap")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to resolve TAP path: %v\n", err)
@@ -55,11 +37,11 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	if _, err := os.Stat(tapPath); err != nil {
-		fmt.Fprintf(os.Stderr, "expected TAP output missing: %s\n", tapPath)
+		fmt.Fprintf(os.Stderr, "expected TAP output missing: %s (build artifacts first via CI build step or ./build.sh)\n", tapPath)
 		os.Exit(1)
 	}
 	if _, err := os.Stat(dskPath); err != nil {
-		fmt.Fprintf(os.Stderr, "expected DSK output missing: %s\n", dskPath)
+		fmt.Fprintf(os.Stderr, "expected DSK output missing: %s (build artifacts first via CI build step or ./build.sh)\n", dskPath)
 		os.Exit(1)
 	}
 
