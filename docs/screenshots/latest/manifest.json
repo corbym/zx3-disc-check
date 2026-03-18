@@ -1,0 +1,8 @@
+{
+  "source": "github-actions",
+  "tag": "v0.0.16",
+  "run_id": "23203876746",
+  "run_url": "https://github.com/corbym/zx3-disc-check/actions/runs/23203876746",
+  "artifact_name": "zx3-disk-test-v0.0.16",
+  "note": "Latest successful tagged smoke run that included screen-check BMP pages at time of seeding."
+}

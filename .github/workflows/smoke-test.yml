@@ -3,6 +3,8 @@ name: Smoke Test
 on:
   push:
     branches: [ main, master, develop ]
+    paths-ignore:
+      - docs/screenshots/**
   pull_request:
     branches: [ main, master, develop ]
 
@@ -117,6 +119,57 @@ jobs:
           else
             echo "name=zx3-disk-test-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Publish README screenshots from tagged build
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.tag_semver.outputs.tag != ''
+        env:
+          TAG: ${{ steps.tag_semver.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          SCREEN_SRC="out/screen-check"
+          LATEST_DIR="docs/screenshots/latest"
+          TAG_DIR="docs/screenshots/tags/${TAG}"
+          RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          test -d "$SCREEN_SRC"
+          mkdir -p "$LATEST_DIR" "$TAG_DIR"
+
+          # Keep README embeds and tag archives in sync with latest successful tagged smoke run.
+          rm -f "$LATEST_DIR"/*.bmp
+          cp "$SCREEN_SRC"/*.bmp "$LATEST_DIR"/
+          cp "$SCREEN_SRC"/*.bmp "$TAG_DIR"/
+
+          cat > "$LATEST_DIR/manifest.json" <<EOF
+          {
+            "tag": "${TAG}",
+            "run_id": "${GITHUB_RUN_ID}",
+            "run_url": "${RUN_URL}",
+            "commit": "${GITHUB_SHA}",
+            "updated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+
+          cat > "$TAG_DIR/manifest.json" <<EOF
+          {
+            "tag": "${TAG}",
+            "run_id": "${GITHUB_RUN_ID}",
+            "run_url": "${RUN_URL}",
+            "commit": "${GITHUB_SHA}",
+            "updated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+
+          git add docs/screenshots
+          if git diff --cached --quiet; then
+            echo "No screenshot updates to commit"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -m "docs(screens): refresh screenshots for ${TAG} [skip ci]"
+          git push origin HEAD:${GITHUB_REF_NAME}
 
       - name: Upload build artifacts
         if: success()

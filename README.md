@@ -100,6 +100,26 @@ Notes:
 - `save-screen` via ZRCP supports `bmp`, `scr`, and `pbm` output formats.
 - Screenshot artifacts land in `out/screen-check/` and are uploaded by CI.
 
+### Latest CI Screen Pages
+
+These screenshots are inlined from repository files that are refreshed by the Smoke Test workflow after successful tagged builds.
+
+Version note: the screenshots below come from the latest successful tagged CI build that published screen pages, and your local/released version may differ.
+
+Provenance (auto-maintained by workflow):
+- Latest manifest (tag, run URL, commit, timestamp): [docs/screenshots/latest/manifest.json](docs/screenshots/latest/manifest.json)
+- Latest screenshot folder used by README embeds: [docs/screenshots/latest](docs/screenshots/latest)
+- Per-tag screenshot archives: [docs/screenshots/tags](docs/screenshots/tags)
+- Smoke workflow runs: [Smoke Test workflow](https://github.com/corbym/zx3-disc-check/actions/workflows/smoke-test.yml)
+
+![Main Menu](docs/screenshots/latest/01_menu.bmp)
+
+![Test 5 Running](docs/screenshots/latest/04_test5_running.bmp)
+
+![Test 5 Fail Prompt](docs/screenshots/latest/05_test5_fail_prompt.bmp)
+
+![Menu After Loop](docs/screenshots/latest/09_menu_after_loop.bmp)
+
 ## Read ID Result Notes
 
 - `CHRN` is only meaningful when Read ID succeeds.
