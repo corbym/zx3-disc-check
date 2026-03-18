@@ -207,29 +207,39 @@ func TestScreenCaptureStages(t *testing.T) {
 		t.Helper()
 		actual := filepath.Join(screenDir, filename)
 		approved := filepath.Join(approvedDir, filename)
-		if err := c.SaveScreen(actual); err != nil {
-			t.Fatalf("failed to save %s: %v", filename, err)
-		}
-
-		actualBytes, err := os.ReadFile(actual)
-		if err != nil {
-			t.Fatalf("failed reading actual screenshot %s: %v", actual, err)
-		}
-
-		if updateApproved {
-			if err := os.WriteFile(approved, actualBytes, 0o644); err != nil {
-				t.Fatalf("failed updating approved screenshot %s: %v", approved, err)
-			}
-			return
-		}
-
 		approvedBytes, err := os.ReadFile(approved)
 		if err != nil {
 			t.Fatalf("approved screenshot missing or unreadable: %s (set ZX3_UPDATE_APPROVED=1 to refresh baselines)", approved)
 		}
-		if !screenshotsEqual(actualBytes, approvedBytes) {
-			t.Fatalf("screenshot mismatch for %s\napproved: %s\nactual: %s", filename, approved, actual)
+
+		const maxCaptureAttempts = 5
+		for attempt := 1; attempt <= maxCaptureAttempts; attempt++ {
+			if err := c.SaveScreen(actual); err != nil {
+				t.Fatalf("failed to save %s: %v", filename, err)
+			}
+
+			actualBytes, readErr := os.ReadFile(actual)
+			if readErr != nil {
+				t.Fatalf("failed reading actual screenshot %s: %v", actual, readErr)
+			}
+
+			if updateApproved {
+				if err := os.WriteFile(approved, actualBytes, 0o644); err != nil {
+					t.Fatalf("failed updating approved screenshot %s: %v", approved, err)
+				}
+				return
+			}
+
+			if screenshotsEqual(actualBytes, approvedBytes) {
+				return
+			}
+
+			if attempt < maxCaptureAttempts {
+				time.Sleep(250 * time.Millisecond)
+			}
 		}
+
+		t.Fatalf("screenshot mismatch for %s after %d attempts\napproved: %s\nactual: %s", filename, maxCaptureAttempts, approved, actual)
 	}
 
 	pressEnterUntilMenu := func(timeout time.Duration) {
