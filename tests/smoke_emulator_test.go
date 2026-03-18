@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,10 +11,11 @@ import (
 )
 
 var (
-	suiteClient *EmulatorClient
-	suiteSkip   bool
-	tapPath     string
-	dskPath     string
+	suiteClient  *EmulatorClient
+	suiteSkip    bool
+	tapPath      string
+	dskPath      string
+	repoRootPath string
 )
 
 func TestMain(m *testing.M) {
@@ -23,6 +25,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	repoRoot := filepath.Clean(filepath.Join(cwd, ".."))
+	repoRootPath = repoRoot
 
 	buildLog := "/tmp/zx3-build.log"
 	buildCmd := exec.Command("sh", "./build.sh")
@@ -203,43 +206,165 @@ func TestMotorStatusMenu(t *testing.T) {
 
 func TestScreenCaptureStages(t *testing.T) {
 	c := requireSuiteClient(t)
-	screenDir := filepath.Join("out", "screen-check")
+	screenDir := filepath.Join(repoRootPath, "out", "screen-check")
+	approvedDir := filepath.Join(repoRootPath, "tests", "approved", "screen-check")
+	updateApproved := os.Getenv("ZX3_UPDATE_APPROVED") == "1"
 	if err := os.MkdirAll(screenDir, 0o755); err != nil {
 		t.Fatalf("failed to create out/screen-check directory: %v", err)
 	}
+	if updateApproved {
+		if err := os.MkdirAll(approvedDir, 0o755); err != nil {
+			t.Fatalf("failed to create approved screenshot directory: %v", err)
+		}
+	}
 
 	resetAndLoadTap(t, c)
-	time.Sleep(7 * time.Second)
+	waitForMenu(t, c, 30*time.Second)
 
-	type stage struct {
-		key      byte
-		delay    time.Duration
-		filename string
-	}
-	stages := []stage{
-		{0, 0, "01_menu.bmp"},
-		{'2', 3 * time.Second, "02_test2_running.bmp"},
-		{0, 3 * time.Second, "03_after_test2.bmp"},
-		{'5', 3 * time.Second, "04_test5_running.bmp"},
-		{0, 1 * time.Second, "05_test5_fail_prompt.bmp"},
-		{' ', 2500 * time.Millisecond, "06_menu_after_fail.bmp"},
-		{'6', 5 * time.Second, "07_test6_loop.bmp"},
-		{0, 4 * time.Second, "08_test6_loop2.bmp"},
-		{'X', 3500 * time.Millisecond, "09_menu_after_loop.bmp"},
+	captureChecked := func(filename string) {
+		t.Helper()
+		actual := filepath.Join(screenDir, filename)
+		approved := filepath.Join(approvedDir, filename)
+		if err := c.SaveScreen(actual); err != nil {
+			t.Fatalf("failed to save %s: %v", filename, err)
+		}
+
+		actualBytes, err := os.ReadFile(actual)
+		if err != nil {
+			t.Fatalf("failed reading actual screenshot %s: %v", actual, err)
+		}
+
+		if updateApproved {
+			if err := os.WriteFile(approved, actualBytes, 0o644); err != nil {
+				t.Fatalf("failed updating approved screenshot %s: %v", approved, err)
+			}
+			return
+		}
+
+		approvedBytes, err := os.ReadFile(approved)
+		if err != nil {
+			t.Fatalf("approved screenshot missing or unreadable: %s (set ZX3_UPDATE_APPROVED=1 to refresh baselines)", approved)
+		}
+		if !screenshotsEqual(actualBytes, approvedBytes) {
+			t.Fatalf("screenshot mismatch for %s\napproved: %s\nactual: %s", filename, approved, actual)
+		}
 	}
 
-	for _, s := range stages {
-		if s.key != 0 {
-			if err := c.SendKey(s.key); err != nil {
-				t.Fatalf("failed to send key %q before %s: %v", s.key, s.filename, err)
+	pressEnterUntilMenu := func(timeout time.Duration) {
+		t.Helper()
+		deadline := time.Now().Add(timeout)
+		lastOCR := ""
+		for time.Now().Before(deadline) {
+			if ocr, err := c.OCR(); err == nil {
+				lastOCR = ocr
+				if containsAll(ocr, "ZX +3 DISK TESTER", "ENTER: SELECT") {
+					return
+				}
+			}
+			if err := c.SendKey(13); err != nil {
+				t.Fatalf("failed to send Enter key: %v", err)
+			}
+			if _, err := c.WaitForOCR(1500*time.Millisecond, "ZX +3 DISK TESTER", "ENTER: SELECT"); err == nil {
+				return
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+		t.Fatalf("timed out waiting for menu after Enter\nlast OCR:\n%s", lastOCR)
+	}
+
+	type screenStage struct {
+		name        string
+		captureFile string
+		key         byte
+		waitFor     []string
+		waitTimeout time.Duration
+		enterToMenu bool
+	}
+
+	stages := []screenStage{
+		{
+			name:        "menu",
+			captureFile: "01_menu.bmp",
+			waitFor:     []string{"ZX +3 DISK TESTER", "ENTER: SELECT"},
+			waitTimeout: 10 * time.Second,
+		},
+		{
+			name:        "motor status",
+			captureFile: "02_motor_status.bmp",
+			key:         'M',
+			waitFor:     []string{"MOTOR AND DRIVE STATUS", "RESULT:"},
+			waitTimeout: 15 * time.Second,
+		},
+		{
+			name:        "menu after motor",
+			captureFile: "03_menu_after_motor.bmp",
+			waitFor:     []string{"ZX +3 DISK TESTER", "ENTER: SELECT"},
+			waitTimeout: 20 * time.Second,
+			enterToMenu: true,
+		},
+		{
+			name:        "report card",
+			captureFile: "04_report_card.bmp",
+			key:         'R',
+			waitFor:     []string{"TEST REPORT CARD", "OVERALL ["},
+			waitTimeout: 15 * time.Second,
+		},
+		{
+			name:        "menu after report",
+			captureFile: "05_menu_after_report.bmp",
+			waitFor:     []string{"ZX +3 DISK TESTER", "ENTER: SELECT"},
+			waitTimeout: 20 * time.Second,
+			enterToMenu: true,
+		},
+		{
+			name:        "run-all complete",
+			captureFile: "06_run_all_complete.bmp",
+			key:         'A',
+			waitFor:     []string{"TEST REPORT CARD", "STATUS: COMPLETE"},
+			waitTimeout: 180 * time.Second,
+		},
+	}
+
+	for _, stage := range stages {
+		if stage.enterToMenu {
+			pressEnterUntilMenu(stage.waitTimeout)
+		}
+
+		if stage.key != 0 {
+			if err := c.SendKey(stage.key); err != nil {
+				t.Fatalf("failed to send key %q for %s: %v", stage.key, stage.name, err)
 			}
 		}
-		if s.delay > 0 {
-			time.Sleep(s.delay)
+
+		if len(stage.waitFor) > 0 {
+			if _, err := c.WaitForOCR(stage.waitTimeout, stage.waitFor...); err != nil {
+				t.Fatalf("timed out waiting for %s: %v", stage.name, err)
+			}
 		}
-		shot := filepath.Join(screenDir, s.filename)
-		if err := c.SaveScreen(shot); err != nil {
-			t.Fatalf("failed to save %s: %v", s.filename, err)
-		}
+
+		captureChecked(stage.captureFile)
 	}
+}
+
+func screenshotsEqual(actual, approved []byte) bool {
+	actualPixels, actualOK := bmpPixelData(actual)
+	approvedPixels, approvedOK := bmpPixelData(approved)
+	if actualOK && approvedOK {
+		return bytes.Equal(actualPixels, approvedPixels)
+	}
+	return bytes.Equal(actual, approved)
+}
+
+func bmpPixelData(data []byte) ([]byte, bool) {
+	if len(data) < 14 || data[0] != 'B' || data[1] != 'M' {
+		return nil, false
+	}
+	offset := int(data[10]) |
+		(int(data[11]) << 8) |
+		(int(data[12]) << 16) |
+		(int(data[13]) << 24)
+	if offset <= 0 || offset >= len(data) {
+		return nil, false
+	}
+	return data[offset:], true
 }
