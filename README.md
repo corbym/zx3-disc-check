@@ -32,6 +32,10 @@ Targets the **ZX Spectrum +3** internal floppy system:
 
 > **uPD765A read completion note**: on Spectrum +3 hardware, software cannot drive the FDC Terminal Count (TC) line. A successful `READ DATA` may therefore finish with `ST0.IC=01` and `ST1.EN=1` (instead of clean zero status). The tester treats this specific pattern as success when no other error bits are present.
 
+Reference documentation used for +3 FDC behavior:
+- [Spectrum +3 disc controller (NEC uPD765) - problemkaputt.de](https://problemkaputt.de/zxdocs.htm#spectrumdiscspectrum3disccontrollernecupd765)
+- [uPD765A Disc Controller Primer - muckypaws.com](https://muckypaws.com/2024/02/25/%C2%B5pd765a-disc-controller-primer/)
+
 ## Build
 
 ### Prerequisites
