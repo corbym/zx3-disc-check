@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -91,6 +92,28 @@ func waitForMenu(t *testing.T, c *EmulatorClient, timeout time.Duration) {
 	}
 }
 
+func waitForMenuSelection(t *testing.T, c *EmulatorClient, label string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	upperLabel := strings.ToUpper(label)
+	lastOCR := ""
+
+	for time.Now().Before(deadline) {
+		ocr, err := c.OCR()
+		if err == nil {
+			lastOCR = ocr
+			for _, line := range strings.Split(strings.ToUpper(ocr), "\n") {
+				if strings.Contains(line, upperLabel) && strings.Contains(line, "~") {
+					return
+				}
+			}
+		}
+		time.Sleep(120 * time.Millisecond)
+	}
+
+	t.Fatalf("menu selection did not move to expected item %q\nlast OCR:\n%s", label, lastOCR)
+}
+
 func TestMenuAppearsAfterTapLoad(t *testing.T) {
 	c := requireSuiteClient(t)
 	resetAndLoadTap(t, c)
@@ -101,6 +124,44 @@ func TestMenuAppearsAfterTapLoad(t *testing.T) {
 	}
 	if !containsAll(ocr, "W/F", "S/V", "Q: QUIT") {
 		t.Fatalf("menu helper hints missing expected key aliases\nOCR:\n%s", ocr)
+	}
+}
+
+func TestMenuSelectionMovesAcrossAllItems(t *testing.T) {
+	c := requireSuiteClient(t)
+	resetAndLoadTap(t, c)
+	waitForMenu(t, c, 30*time.Second)
+
+	labels := []string{
+		"M MOTOR AND DRIVE STATUS",
+		"P DRIVE READ ID PROBE",
+		"K RECALIBRATE AND SEEK TRACK 2",
+		"I INTERACTIVE STEP SEEK",
+		"T READ ID ON TRACK 0",
+		"D READ TRACK DATA LOOP",
+		"H DISK RPM CHECK LOOP",
+		"A RUN ALL CORE TESTS",
+		"R SHOW REPORT CARD",
+		"C CLEAR STORED RESULTS",
+		"Q QUIT",
+	}
+
+	waitForMenuSelection(t, c, labels[0], 6*time.Second)
+
+	for i := 1; i < len(labels); i++ {
+		time.Sleep(300 * time.Millisecond)
+		if err := c.SendKey('S'); err != nil {
+			t.Fatalf("failed to send S key for index %d: %v", i, err)
+		}
+		waitForMenuSelection(t, c, labels[i], 6*time.Second)
+	}
+
+	for i := len(labels) - 2; i >= 0; i-- {
+		time.Sleep(300 * time.Millisecond)
+		if err := c.SendKey('W'); err != nil {
+			t.Fatalf("failed to send W key for index %d: %v", i, err)
+		}
+		waitForMenuSelection(t, c, labels[i], 6*time.Second)
 	}
 }
 
