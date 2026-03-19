@@ -50,7 +50,7 @@ static const KeyMap menu_keymap[] = {
   static unsigned char menu_up_latched;
   static unsigned char menu_down_latched;
 
-static unsigned char break_pressed(void) {
+unsigned char break_pressed(void) {
   unsigned char caps_shift = (unsigned char)(inportb(0xFEFE) & 0x01);
   unsigned char space = (unsigned char)(inportb(0x7FFE) & 0x01);
   return (unsigned char)((caps_shift == 0) && (space == 0));

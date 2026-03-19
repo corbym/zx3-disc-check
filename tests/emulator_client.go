@@ -19,17 +19,18 @@ func startClient() (*EmulatorClient, error) {
 		return nil, err
 	}
 
-	emuCmd, err := spawnEmulator(emulator, defaultPort)
+	port := resolvePort()
+	emuCmd, err := spawnEmulator(emulator, port)
 	if err != nil {
 		return nil, fmt.Errorf("failed to spawn emulator: %w", err)
 	}
 
-	if !waitForPort(defaultHost, defaultPort, 15*time.Second) {
-		stopEmulator(emuCmd, defaultHost, defaultPort)
+	if !waitForPort(defaultHost, port, 15*time.Second) {
+		stopEmulator(emuCmd, defaultHost, port)
 		return nil, fmt.Errorf("emulator did not open ZRCP port")
 	}
 
-	return &EmulatorClient{emuCmd: emuCmd, host: defaultHost, port: defaultPort}, nil
+	return &EmulatorClient{emuCmd: emuCmd, host: defaultHost, port: port}, nil
 }
 
 func (c *EmulatorClient) Stop() {

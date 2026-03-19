@@ -24,4 +24,4 @@ zcc +zx -vn -clib=new ${DEBUG_CFLAGS} ${UI_CFLAGS} ${HEADLESS_FONT_CFLAGS} -crea
 # DSK build: bootable +3 disk image
 zcc +zx -vn -clib=new ${DEBUG_CFLAGS} ${UI_CFLAGS} ${HEADLESS_FONT_CFLAGS} -subtype=plus3 -create-app disk_tester.c menu_system.c intstate.asm -o ./out/disk_tester_plus3 -m
 
-z88dk-dis out/disk_tester_CODE.bin > out/disk_tester.asm
+z88dk-dis out/disk_tester_CODE.bin > out/disk_tester.asm || true

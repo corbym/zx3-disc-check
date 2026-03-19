@@ -16,3 +16,4 @@ unsigned char menu_index_for_key(char key, unsigned char *found);
 int menu_resolve_action_key(int key, unsigned char *selected_index,
                             unsigned char *selection_changed);
 int read_menu_key_blocking(void);
+unsigned char break_pressed(void);

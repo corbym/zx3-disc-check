@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -19,6 +20,16 @@ const (
 	defaultHost    = "127.0.0.1"
 	defaultPort    = 10000
 )
+
+func resolvePort() int {
+	if env := os.Getenv("ZRCP_PORT"); env != "" {
+		if port, err := strconv.Atoi(env); err == nil && port > 0 && port < 65536 {
+			return port
+		}
+	}
+
+	return defaultPort
+}
 
 func resolveEmulator() (string, error) {
 	if env := os.Getenv("ZESARUX_BIN"); env != "" {

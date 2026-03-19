@@ -92,6 +92,8 @@ func waitForMenu(t *testing.T, c *EmulatorClient, timeout time.Duration) {
 	}
 }
 
+// This polls OCR directly because the assertion needs the label and '~' on the
+// same rendered line, which WaitForOCR cannot express.
 func waitForMenuSelection(t *testing.T, c *EmulatorClient, label string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)

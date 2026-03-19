@@ -26,6 +26,7 @@
 #include "disk_tester.h"
 
 #include <ctype.h>
+#include <intrinsic.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
@@ -95,14 +96,18 @@ static void delay_ms(unsigned int ms) {
 #define RUN_ALL_RUNNING_DELAY_MS 120U
 #define RUN_ALL_RESULT_DELAY_MS 220U
 
-/* Approximate sub-millisecond pacing for FDC byte gaps. */
+/* Approximate sub-millisecond pacing for FDC byte gaps.
+ * Bracketed with DI/EI so IM1 interrupts cannot stretch the controller gap.
+ */
 static void delay_us_approx(unsigned int us) {
   unsigned int i, j;
+  intrinsic_di();
   for (i = 0; i < us; i++) {
     for (j = 0; j < 4U; j++) {
       delay_spin_sink++;
     }
   }
+  intrinsic_ei();
 }
 #define RPM_LOOP_DELAY_MS 180U
 #define RPM_FAIL_DELAY_MS 450U
@@ -285,13 +290,6 @@ static void select_compact_font(void) {
   if (!compact_font_active) {
     ioctl(1, IOCTL_OTERM_FONT, font_ram);
     compact_font_active = 1;
-  }
-}
-
-static void select_rom_font(void) {
-  if (compact_font_active) {
-    ioctl(1, IOCTL_OTERM_FONT, font_rom);
-    compact_font_active = 0;
   }
 }
 
@@ -568,6 +566,7 @@ static void ui_begin_text_screen(const char* title, const char* controls) {
   select_compact_font();
 #endif
 
+  /* Pointer-equality cache is safe because callers pass stable string literals. */
   if (ui_text_screen_active && ui_text_screen_title == title &&
       ui_text_screen_controls == controls) {
     return;
@@ -649,7 +648,39 @@ static void ui_update_main_menu_selection(unsigned char old_index,
 static void ui_render_text_screen(const char* title, const char* controls,
                                   const char* const* lines,
                                   unsigned char line_count,
-                                  const char* result);
+                                  const char* result) {
+  unsigned char i;
+  unsigned char row;
+
+  ui_begin_text_screen(title, controls);
+
+  if (controls) {
+    ui_render_cached_text_row(2, controls, UI_TEXT_ROW_STYLE_CONTROL);
+  } else {
+    ui_render_cached_text_row(2, "", UI_TEXT_ROW_STYLE_BLANK);
+  }
+
+  row = 3;
+  for (i = 0; i < line_count && row < 23U; i++, row++) {
+    if (lines[i]) {
+      ui_render_cached_text_row(row, lines[i], UI_TEXT_ROW_STYLE_TEXT);
+    } else {
+      ui_render_cached_text_row(row, "", UI_TEXT_ROW_STYLE_BLANK);
+    }
+  }
+
+  if (result && (unsigned char)(row + 1U) < 24U) {
+    ui_render_cached_text_row(row, "", UI_TEXT_ROW_STYLE_BLANK);
+    ui_render_cached_text_row((unsigned char)(row + 1U), result,
+                              UI_TEXT_ROW_STYLE_RESULT);
+    row = (unsigned char)(row + 2U);
+  }
+
+  while (row < 24U) {
+    ui_render_cached_text_row(row, "", UI_TEXT_ROW_STYLE_BLANK);
+    row++;
+  }
+}
 
 static void ui_render_main_menu(unsigned char selected_index,
                                 unsigned char total) {
@@ -748,7 +779,8 @@ static void build_overall_row(char* out, unsigned char total) {
   sprintf(out, "OVERALL [%s] %u/5 PASS", meter, (unsigned int)total);
 }
 
-static void ui_colour_report_row(unsigned char row, const char* text) {
+static void ui_colour_report_row(unsigned char row, const char* text,
+                                 unsigned char state) {
   const char* lbr;
   const char* rbr;
   unsigned char col;
@@ -759,13 +791,6 @@ static void ui_colour_report_row(unsigned char row, const char* text) {
   lbr = strchr(text, '[');
   rbr = strchr(text, ']');
   if (lbr && rbr && rbr > lbr) {
-    unsigned char state = REPORT_ROW_NOT_RUN;
-    if (strstr(text, "PASS")) {
-      state = REPORT_ROW_PASS;
-    } else if (strstr(text, "FAIL")) {
-      state = REPORT_ROW_FAIL;
-    }
-
     bar_col = (unsigned char)(lbr - text + 1);
     while (bar_col < 32U && &text[bar_col] < rbr) {
       char ch = text[bar_col];
@@ -784,7 +809,7 @@ static void ui_colour_report_row(unsigned char row, const char* text) {
   }
 
   for (col = 0; col < 29U; col++) {
-    if (strncmp(&text[col], "PASS", 4U) == 0) {
+    if (state == REPORT_ROW_PASS && strncmp(&text[col], "PASS", 4U) == 0) {
       ui_attr_set_cell(row, col, ZX_COLOUR_BLACK, ZX_COLOUR_GREEN, 1);
       ui_attr_set_cell(row, (unsigned char)(col + 1U), ZX_COLOUR_BLACK,
                        ZX_COLOUR_GREEN, 1);
@@ -794,7 +819,7 @@ static void ui_colour_report_row(unsigned char row, const char* text) {
                        ZX_COLOUR_GREEN, 1);
       break;
     }
-    if (strncmp(&text[col], "FAIL", 4U) == 0) {
+    if (state == REPORT_ROW_FAIL && strncmp(&text[col], "FAIL", 4U) == 0) {
       ui_attr_set_cell(row, col, ZX_COLOUR_RED, ZX_COLOUR_YELLOW, 1);
       ui_attr_set_cell(row, (unsigned char)(col + 1U), ZX_COLOUR_RED,
                        ZX_COLOUR_YELLOW, 1);
@@ -804,7 +829,8 @@ static void ui_colour_report_row(unsigned char row, const char* text) {
                        ZX_COLOUR_YELLOW, 1);
       break;
     }
-    if (strncmp(&text[col], "NOT RUN", 7U) == 0) {
+    if (state == REPORT_ROW_NOT_RUN &&
+        strncmp(&text[col], "NOT RUN", 7U) == 0) {
       ui_attr_set_cell(row, col, ZX_COLOUR_BLUE, ZX_COLOUR_WHITE, 1);
       ui_attr_set_cell(row, (unsigned char)(col + 1U), ZX_COLOUR_BLUE,
                        ZX_COLOUR_WHITE, 1);
@@ -845,6 +871,12 @@ static const char* report_result_text(void) {
 static void ui_render_report_card(void) {
   unsigned char total = pass_count();
   unsigned char last_state;
+  unsigned char motor_state;
+  unsigned char drive_state;
+  unsigned char recal_state;
+  unsigned char seek_state;
+  unsigned char readid_state;
+  unsigned char overall_state;
   char line_status[32];
   char line_last[32];
   char line_motor[32];
@@ -862,20 +894,25 @@ static void ui_render_report_card(void) {
     last_state = last_test_failed ? REPORT_ROW_FAIL : REPORT_ROW_PASS;
   }
 
+  motor_state = report_row_state(results.motor_test_ran,
+                                 results.motor_test_pass);
+  drive_state = report_row_state(results.sense_drive_ran,
+                                 results.sense_drive_pass);
+  recal_state = report_row_state(results.recalibrate_ran,
+                                 results.recalibrate_pass);
+  seek_state = report_row_state(results.seek_ran, results.seek_pass);
+  readid_state = report_row_state(results.read_id_ran, results.read_id_pass);
+  overall_state = (total == 5U)
+                      ? REPORT_ROW_PASS
+                      : (any_report_test_ran() ? REPORT_ROW_FAIL
+                                               : REPORT_ROW_NOT_RUN);
+
   build_report_row(line_last, "LAST", last_state);
-  build_report_row(line_motor, "MOTOR",
-                   report_row_state(results.motor_test_ran,
-                                    results.motor_test_pass));
-  build_report_row(line_drive, "DRIVE",
-                   report_row_state(results.sense_drive_ran,
-                                    results.sense_drive_pass));
-  build_report_row(line_recal, "RECAL",
-                   report_row_state(results.recalibrate_ran,
-                                    results.recalibrate_pass));
-  build_report_row(line_seek, "SEEK",
-                   report_row_state(results.seek_ran, results.seek_pass));
-  build_report_row(line_readid, "READID",
-                   report_row_state(results.read_id_ran, results.read_id_pass));
+  build_report_row(line_motor, "MOTOR", motor_state);
+  build_report_row(line_drive, "DRIVE", drive_state);
+  build_report_row(line_recal, "RECAL", recal_state);
+  build_report_row(line_seek, "SEEK", seek_state);
+  build_report_row(line_readid, "READID", readid_state);
   build_overall_row(line_overall, total);
 
   lines[0] = line_status;
@@ -892,49 +929,13 @@ static void ui_render_report_card(void) {
                         report_result_text());
 
   /* Rows are fixed by ui_render_text_screen: controls at row 2, lines start at row 3. */
-  ui_colour_report_row(4U, line_last);
-  ui_colour_report_row(5U, line_motor);
-  ui_colour_report_row(6U, line_drive);
-  ui_colour_report_row(7U, line_recal);
-  ui_colour_report_row(8U, line_seek);
-  ui_colour_report_row(9U, line_readid);
-  ui_colour_report_row(10U, line_overall);
-}
-static void ui_render_text_screen(const char* title, const char* controls,
-                                  const char* const* lines,
-                                  unsigned char line_count,
-                                  const char* result) {
-  unsigned char i;
-  unsigned char row;
-
-  ui_begin_text_screen(title, controls);
-
-  if (controls) {
-    ui_render_cached_text_row(2, controls, UI_TEXT_ROW_STYLE_CONTROL);
-  } else {
-    ui_render_cached_text_row(2, "", UI_TEXT_ROW_STYLE_BLANK);
-  }
-
-  row = 3;
-  for (i = 0; i < line_count && row < 23U; i++, row++) {
-    if (lines[i]) {
-      ui_render_cached_text_row(row, lines[i], UI_TEXT_ROW_STYLE_TEXT);
-    } else {
-      ui_render_cached_text_row(row, "", UI_TEXT_ROW_STYLE_BLANK);
-    }
-  }
-
-  if (result && (unsigned char)(row + 1U) < 24U) {
-    ui_render_cached_text_row(row, "", UI_TEXT_ROW_STYLE_BLANK);
-    ui_render_cached_text_row((unsigned char)(row + 1U), result,
-                              UI_TEXT_ROW_STYLE_RESULT);
-    row = (unsigned char)(row + 2U);
-  }
-
-  while (row < 24U) {
-    ui_render_cached_text_row(row, "", UI_TEXT_ROW_STYLE_BLANK);
-    row++;
-  }
+  ui_colour_report_row(4U, line_last, last_state);
+  ui_colour_report_row(5U, line_motor, motor_state);
+  ui_colour_report_row(6U, line_drive, drive_state);
+  ui_colour_report_row(7U, line_recal, recal_state);
+  ui_colour_report_row(8U, line_seek, seek_state);
+  ui_colour_report_row(9U, line_readid, readid_state);
+  ui_colour_report_row(10U, line_overall, overall_state);
 }
 
 static void ui_render_track_loop_screen(unsigned char track,
@@ -1034,12 +1035,6 @@ static const KeyMap keymap[] = {
   static unsigned char runtime_key_latched[RUNTIME_KEYMAP_COUNT];
   static unsigned char runtime_break_latched;
   static int runtime_pending_key = -1;
-
-static unsigned char break_pressed(void) {
-  unsigned char caps_shift = (unsigned char)(inportb(0xFEFE) & 0x01);
-  unsigned char space = (unsigned char)(inportb(0x7FFE) & 0x01);
-  return (unsigned char)((caps_shift == 0) && (space == 0));
-}
 
 static unsigned char x_pressed(void) {
   return (unsigned char)((inportb(0xFEFE) & 0x04) == 0);
@@ -1375,7 +1370,7 @@ static unsigned char cmd_read_data(
 static unsigned char wait_seek_complete(unsigned char drive,
                                         unsigned char* out_st0,
                                         unsigned char* out_pcn) {
-  unsigned char st0, pcn;
+  unsigned char st0 = 0, pcn = 0;
   unsigned int wait_ms;
   unsigned char tries;
   unsigned char busy_bit = (unsigned char)(1u << (drive & 0x03));
@@ -1465,15 +1460,13 @@ static void test_motor_and_drive_status(int interactive) {
     strcpy(line4, "TRACK0: ---");
     strcpy(line5, "FAULT : ---");
     ui_render_text_screen(
-        "MOTOR AND DRIVE STATUS",
-        interactive ? "KEYS  : ENTER MENU" : "KEYS  : AUTO RETURN MENU", lines,
-        6, "RESULT: READY");
+      "MOTOR AND DRIVE STATUS", single_shot_test_controls(interactive),
+      lines, 6, "RESULT: READY");
     delay_ms(TEST_CARD_STATE_DELAY_MS);
     strcpy(line6, "MOTOR : ON");
     ui_render_text_screen(
-        "MOTOR AND DRIVE STATUS",
-        interactive ? "KEYS  : ENTER MENU" : "KEYS  : AUTO RETURN MENU", lines,
-        6, "RESULT: RUNNING");
+      "MOTOR AND DRIVE STATUS", single_shot_test_controls(interactive),
+      lines, 6, "RESULT: RUNNING");
   }
 
   plus3_motor_on();
@@ -1496,12 +1489,12 @@ static void test_motor_and_drive_status(int interactive) {
   }
 
   plus3_motor_off();
-  results.motor_test_pass = 1;
+  results.motor_test_pass = have_st3;
   last_test_failed = (unsigned char)(results.sense_drive_pass == 0);
   strcpy(line6, "MOTOR : OFF");
   ui_render_text_screen(
-      "MOTOR AND DRIVE STATUS",
-      interactive ? "KEYS  : ENTER MENU" : "KEYS  : AUTO RETURN MENU", lines, 6,
+    "MOTOR AND DRIVE STATUS", single_shot_test_controls(interactive), lines,
+    6,
       results.sense_drive_pass ? "RESULT: PASS" : "RESULT: FAIL");
 }
 
@@ -1517,11 +1510,11 @@ static void test_read_id_probe(int interactive) {
   char line3[32];
   char line4[32];
   char line5[32];
-  char line6[32];
+  char line6[48];
   const char* lines[6];
 
   last_test_failed = 0;
-  results.sense_drive_ran = 1;
+  results.read_id_ran = 1;
   lines[0] = line1;
   lines[1] = line2;
   lines[2] = line3;
@@ -1571,7 +1564,7 @@ static void test_read_id_probe(int interactive) {
   /* 3) Media probe: Read ID, best indicator for both hardware and emulation */
   rid_ok = cmd_read_id(FDC_DRIVE, 0, &st0, &st1, &st2, &c, &h, &r, &n);
 
-  results.sense_drive_pass = rid_ok ? 1 : 0;
+  results.read_id_pass = rid_ok ? 1 : 0;
   last_test_failed = (unsigned char)(rid_ok == 0);
   plus3_motor_off();
   if (rid_ok) {
@@ -1581,7 +1574,7 @@ static void test_read_id_probe(int interactive) {
   }
   ui_render_text_screen(
       "DRIVE READ ID PROBE", single_shot_test_controls(interactive), lines, 6,
-      results.sense_drive_pass ? "RESULT: PASS" : "RESULT: FAIL");
+      results.read_id_pass ? "RESULT: PASS" : "RESULT: FAIL");
 }
 
 static void test_recal_seek_track2(int interactive) {
@@ -1795,7 +1788,7 @@ static void test_read_id(int interactive) {
   char line1[32];
   char line2[32];
   char line3[32];
-  char line4[32];
+  char line4[48];
   const char* lines[4];
   (void)interactive;
 
@@ -1891,7 +1884,7 @@ static void test_read_track_data_loop(void) {
   unsigned char exit_now;
   unsigned char need_ui_redraw = 1;
   char ui_line1[40];
-  char ui_line2[40];
+  char ui_line2[48];
 
   last_test_failed = 0;
 
@@ -2130,7 +2123,22 @@ static void test_rpm_checker(void) {
 
 static void print_results(void) { ui_render_report_card(); }
 
+typedef void (*TestFunc)(int interactive);
+
+static const TestFunc run_all_test_list[] = {
+    test_motor_and_drive_status,
+    test_read_id_probe,
+    test_recal_seek_track2,
+    test_read_id,
+};
+
+enum {
+  RUN_ALL_TEST_COUNT = sizeof(run_all_test_list) / sizeof(run_all_test_list[0])
+};
+
 static void run_all_tests(unsigned char human_mode) {
+  unsigned char i;
+
   memset(&results, 0, sizeof(results));
   reset_report_progress();
   last_test_failed = 0;
@@ -2139,33 +2147,19 @@ static void run_all_tests(unsigned char human_mode) {
   ui_render_report_card();
   if (human_mode) delay_ms_pump_keys(run_all_ready_delay_ms);
 
-  set_report_status(REPORT_STATUS_RUNNING);
-  if (human_mode) delay_ms_pump_keys(run_all_running_delay_ms);
-  test_motor_and_drive_status(0);
-  set_report_status(REPORT_STATUS_COMPLETE);
-  ui_render_report_card();
-  if (human_mode) delay_ms_pump_keys(run_all_result_delay_ms);
+  for (i = 0; i < RUN_ALL_TEST_COUNT; i++) {
+    set_report_status(REPORT_STATUS_RUNNING);
+    if (human_mode) delay_ms_pump_keys(run_all_running_delay_ms);
+    run_all_test_list[i](0);
+    set_report_status(REPORT_STATUS_COMPLETE);
+    if (i == RUN_ALL_TEST_COUNT - 1U) {
+      print_results();
+    } else {
+      ui_render_report_card();
+    }
+    if (human_mode) delay_ms_pump_keys(run_all_result_delay_ms);
+  }
 
-  set_report_status(REPORT_STATUS_RUNNING);
-  if (human_mode) delay_ms_pump_keys(run_all_running_delay_ms);
-  test_read_id_probe(0);
-  set_report_status(REPORT_STATUS_COMPLETE);
-  ui_render_report_card();
-  if (human_mode) delay_ms_pump_keys(run_all_result_delay_ms);
-
-  set_report_status(REPORT_STATUS_RUNNING);
-  if (human_mode) delay_ms_pump_keys(run_all_running_delay_ms);
-  test_recal_seek_track2(0);
-  set_report_status(REPORT_STATUS_COMPLETE);
-  ui_render_report_card();
-  if (human_mode) delay_ms_pump_keys(run_all_result_delay_ms);
-
-  set_report_status(REPORT_STATUS_RUNNING);
-  if (human_mode) delay_ms_pump_keys(run_all_running_delay_ms);
-  test_read_id(0);
-  set_report_status(REPORT_STATUS_COMPLETE);
-  print_results();
-  if (human_mode) delay_ms_pump_keys(run_all_result_delay_ms);
   last_test_failed = (unsigned char)(pass_count() < 5U);
 }
 

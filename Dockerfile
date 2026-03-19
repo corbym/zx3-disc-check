@@ -10,7 +10,6 @@ RUN apt-get update && apt-get install -y \
     git \
     wget \
     curl \
-    golang-go \
     python3 \
     python3-pip \
     perl \
@@ -18,7 +17,6 @@ RUN apt-get update && apt-get install -y \
     flex \
     unzip \
     libncurses-dev \
-    libssl-dev \
     libgmp-dev \
     libxml2-dev \
     xorg-dev \
@@ -28,6 +26,13 @@ RUN apt-get update && apt-get install -y \
     cmake \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Install a pinned Go toolchain instead of Ubuntu's older package version.
+ENV GO_VERSION=1.22.5
+RUN wget -q https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz -O /tmp/go.tar.gz && \
+    tar -C /usr/local -xzf /tmp/go.tar.gz && \
+    rm /tmp/go.tar.gz
+ENV PATH=/usr/local/go/bin:/opt/z88dk/bin:/usr/local/bin:$PATH
 
 # Install z88dk from official source archive (works across amd64/arm64).
 RUN cd /tmp && \
@@ -40,7 +45,6 @@ RUN cd /tmp && \
     test -x /opt/z88dk/bin/zcc && \
     cd /tmp && rm -rf z88dk-src.tgz z88dk
 
-ENV PATH=/opt/z88dk/bin:/usr/local/bin:$PATH
 ENV ZCCCFG=/opt/z88dk/share/z88dk/lib/config
 
 # Build ZEsarUX from official GitHub source tag.
@@ -48,7 +52,7 @@ RUN cd /tmp && \
     wget -q https://github.com/chernandezba/zesarux/archive/refs/tags/${ZESARUX_TAG}.tar.gz -O zesarux.tar.gz && \
     tar -xzf zesarux.tar.gz && \
     cd zesarux-${ZESARUX_TAG}/src && \
-    ./configure --enable-ssl --disable-caca --disable-aa --disable-cursesw --prefix /usr/local && \
+    ./configure --disable-ssl --disable-caca --disable-aa --disable-cursesw --prefix /usr/local && \
     make clean && \
     make -j"$(nproc)" && \
     make install && \
