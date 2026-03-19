@@ -95,6 +95,13 @@ func TestMenuAppearsAfterTapLoad(t *testing.T) {
 	c := requireSuiteClient(t)
 	resetAndLoadTap(t, c)
 	waitForMenu(t, c, 30*time.Second)
+	ocr, err := c.OCR()
+	if err != nil {
+		t.Fatalf("failed to read OCR on menu: %v", err)
+	}
+	if !containsAll(ocr, "W/F", "S/V", "Q: QUIT") {
+		t.Fatalf("menu helper hints missing expected key aliases\nOCR:\n%s", ocr)
+	}
 }
 
 func TestReportCardOpens(t *testing.T) {
@@ -121,6 +128,22 @@ func TestReturnToMenuFromReport(t *testing.T) {
 	}
 	if err := c.SendKey(13); err != nil {
 		t.Fatalf("failed to send Enter key: %v", err)
+	}
+	waitForMenu(t, c, 15*time.Second)
+}
+
+func TestReturnToMenuFromReportWithEscape(t *testing.T) {
+	c := requireSuiteClient(t)
+	resetAndLoadTap(t, c)
+	waitForMenu(t, c, 30*time.Second)
+	if err := c.SendKey('R'); err != nil {
+		t.Fatalf("failed to open report card: %v", err)
+	}
+	if _, err := c.WaitForOCR(15*time.Second, "TEST REPORT CARD", "OVERALL ["); err != nil {
+		t.Fatalf("report card did not open: %v", err)
+	}
+	if err := c.SendKey('X'); err != nil {
+		t.Fatalf("failed to send X exit key: %v", err)
 	}
 	waitForMenu(t, c, 15*time.Second)
 }
@@ -175,7 +198,7 @@ func TestMotorStatusMenu(t *testing.T) {
 		}
 		if ocr, err := c.OCR(); err == nil {
 			lastOCR = ocr
-			if containsAll(ocr, "MOTOR AND DRIVE STATUS", "RESULT:") {
+			if containsAll(ocr, "MOTOR AND DRIVE STATUS", "ENTER/ESC MENU", "MOTOR :", "RESULT:") {
 				return
 			}
 		}
@@ -203,7 +226,7 @@ func TestScreenCaptureStages(t *testing.T) {
 	resetAndLoadTap(t, c)
 	waitForMenu(t, c, 30*time.Second)
 
-	captureChecked := func(filename string) {
+	captureChecked := func(filename string, requireNonBlank bool) {
 		t.Helper()
 		actual := filepath.Join(screenDir, filename)
 		approved := filepath.Join(approvedDir, filename)
@@ -221,6 +244,14 @@ func TestScreenCaptureStages(t *testing.T) {
 			actualBytes, readErr := os.ReadFile(actual)
 			if readErr != nil {
 				t.Fatalf("failed reading actual screenshot %s: %v", actual, readErr)
+			}
+
+			if requireNonBlank && screenshotIsBlank(actualBytes) {
+				if attempt < maxCaptureAttempts {
+					time.Sleep(250 * time.Millisecond)
+					continue
+				}
+				t.Fatalf("captured screenshot is blank after %d attempts: %s", maxCaptureAttempts, filename)
 			}
 
 			if updateApproved {
@@ -271,30 +302,33 @@ func TestScreenCaptureStages(t *testing.T) {
 		waitFor     []string
 		waitTimeout time.Duration
 		settleDelay time.Duration
+		nonBlank    bool
 		enterToMenu bool
 	}
 
 	stages := []screenStage{
-		{
-			name:        "menu",
-			captureFile: "01_menu.bmp",
-			waitFor:     []string{"ZX +3 DISK TESTER", "ENTER: SELECT"},
-			waitTimeout: 10 * time.Second,
-			settleDelay: 500 * time.Millisecond,
-		},
 		{
 			name:        "motor status",
 			captureFile: "02_motor_status.bmp",
 			key:         'M',
 			waitFor:     []string{"MOTOR AND DRIVE STATUS", "RESULT:"},
 			waitTimeout: 15 * time.Second,
+			nonBlank:    true,
+		},
+		{
+			name:        "menu",
+			captureFile: "01_menu.bmp",
+			waitFor:     []string{"ZX +3 DISK TESTER", "ENTER: SELECT"},
+			waitTimeout: 20 * time.Second,
+			enterToMenu: true,
+			nonBlank:    true,
 		},
 		{
 			name:        "menu after motor",
 			captureFile: "03_menu_after_motor.bmp",
 			waitFor:     []string{"ZX +3 DISK TESTER", "ENTER: SELECT"},
-			waitTimeout: 20 * time.Second,
-			enterToMenu: true,
+			waitTimeout: 10 * time.Second,
+			nonBlank:    true,
 		},
 		{
 			name:        "report card",
@@ -302,6 +336,7 @@ func TestScreenCaptureStages(t *testing.T) {
 			key:         'R',
 			waitFor:     []string{"TEST REPORT CARD", "OVERALL ["},
 			waitTimeout: 15 * time.Second,
+			nonBlank:    true,
 		},
 		{
 			name:        "menu after report",
@@ -309,6 +344,7 @@ func TestScreenCaptureStages(t *testing.T) {
 			waitFor:     []string{"ZX +3 DISK TESTER", "ENTER: SELECT"},
 			waitTimeout: 20 * time.Second,
 			enterToMenu: true,
+			nonBlank:    true,
 		},
 		{
 			name:        "run-all complete",
@@ -316,6 +352,7 @@ func TestScreenCaptureStages(t *testing.T) {
 			key:         'A',
 			waitFor:     []string{"TEST REPORT CARD", "STATUS: COMPLETE"},
 			waitTimeout: 180 * time.Second,
+			nonBlank:    true,
 		},
 	}
 
@@ -340,7 +377,7 @@ func TestScreenCaptureStages(t *testing.T) {
 			time.Sleep(stage.settleDelay)
 		}
 
-		captureChecked(stage.captureFile)
+		captureChecked(stage.captureFile, stage.nonBlank)
 	}
 }
 
@@ -365,4 +402,17 @@ func bmpPixelData(data []byte) ([]byte, bool) {
 		return nil, false
 	}
 	return data[offset:], true
+}
+
+func screenshotIsBlank(data []byte) bool {
+	pixels, ok := bmpPixelData(data)
+	if !ok || len(pixels) == 0 {
+		return false
+	}
+	for _, b := range pixels {
+		if b != 0 {
+			return false
+		}
+	}
+	return true
 }

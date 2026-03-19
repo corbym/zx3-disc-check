@@ -124,6 +124,48 @@ unsigned char menu_index_for_key(char key, unsigned char *found) {
   return 0;
 }
 
+int menu_resolve_action_key(int key, unsigned char *selected_index,
+                            unsigned char *selection_changed) {
+  unsigned char found = 0;
+  unsigned char index = 0;
+
+  if (!selected_index || !selection_changed) return 0;
+  *selection_changed = 0;
+
+  if (key == MENU_KEY_UP) {
+    if (*selected_index > 0U) {
+      *selected_index = (unsigned char)(*selected_index - 1U);
+      *selection_changed = 1;
+    }
+    return 0;
+  }
+
+  if (key == MENU_KEY_DOWN) {
+    if ((unsigned char)(*selected_index + 1U) < menu_item_count()) {
+      *selected_index = (unsigned char)(*selected_index + 1U);
+      *selection_changed = 1;
+    }
+    return 0;
+  }
+
+  if (key == '\n') {
+    key = menu_key_for_index(*selected_index);
+  }
+
+  key = toupper((unsigned char)key);
+  index = menu_index_for_key((char)key, &found);
+  if (!found) {
+    return 0;
+  }
+
+  if (index != *selected_index) {
+    *selected_index = index;
+    *selection_changed = 1;
+  }
+
+  return key;
+}
+
 int read_menu_key_blocking(void) {
   unsigned int i;
   unsigned char pressed;

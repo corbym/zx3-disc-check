@@ -13,4 +13,6 @@ const MenuItem *menu_items(void);
 unsigned char menu_item_count(void);
 char menu_key_for_index(unsigned char index);
 unsigned char menu_index_for_key(char key, unsigned char *found);
+int menu_resolve_action_key(int key, unsigned char *selected_index,
+                            unsigned char *selection_changed);
 int read_menu_key_blocking(void);
