@@ -18,6 +18,16 @@ func loadDiskTesterSource(t *testing.T) string {
 	return string(data)
 }
 
+func loadUiSource(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join("..", "ui.c")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", path, err)
+	}
+	return string(data)
+}
+
 func TestReadDataAcceptsTcNotWiredCompletion(t *testing.T) {
 	src := loadDiskTesterSource(t)
 
@@ -99,8 +109,8 @@ func extractRenderFuncBody(t *testing.T, src, sig string) string {
 }
 
 func TestAttrFillUsesMemset(t *testing.T) {
-	src := loadDiskTesterSource(t)
-	body := extractRenderFuncBody(t, src, `static void ui_attr_fill\(unsigned char ink`)
+	src := loadUiSource(t)
+	body := extractRenderFuncBody(t, src, `(?:static\s+)?void ui_attr_fill\(unsigned char ink`)
 
 	if !strings.Contains(body, "memset") {
 		t.Fatalf("ui_attr_fill does not use memset; slow per-cell loop may have been reintroduced")
@@ -111,8 +121,8 @@ func TestAttrFillUsesMemset(t *testing.T) {
 }
 
 func TestFillRowUsesMemset(t *testing.T) {
-	src := loadDiskTesterSource(t)
-	body := extractRenderFuncBody(t, src, `static void ui_screen_fill_row\(unsigned char row`)
+	src := loadUiSource(t)
+	body := extractRenderFuncBody(t, src, `(?:static\s+)?void ui_screen_fill_row\(unsigned char row`)
 
 	if !strings.Contains(body, "memset") {
 		t.Fatalf("ui_screen_fill_row does not use memset; slow per-cell loop may have been reintroduced")
@@ -126,8 +136,8 @@ func TestFillRowUsesMemset(t *testing.T) {
 }
 
 func TestWriteRowDoesNotCallFillRow(t *testing.T) {
-	src := loadDiskTesterSource(t)
-	body := extractRenderFuncBody(t, src, `static void ui_screen_write_row\(unsigned char row`)
+	src := loadUiSource(t)
+	body := extractRenderFuncBody(t, src, `(?:static\s+)?void ui_screen_write_row\(unsigned char row`)
 
 	if strings.Contains(body, "ui_screen_fill_row") {
 		t.Fatalf("ui_screen_write_row must not call ui_screen_fill_row; that causes double pixel-write for text columns")

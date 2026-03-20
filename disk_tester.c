@@ -32,6 +32,7 @@
 #include <sys/ioctl.h>
 
 #include "menu_system.h"
+#include "ui.h"
 
 extern unsigned char inportb(unsigned short port);
 extern void outportb(unsigned short port, unsigned char value);
@@ -58,22 +59,6 @@ static void delay_ms(unsigned int ms) {
 
 #ifndef IOCTL_OTERM_PAUSE
 #define IOCTL_OTERM_PAUSE 0xC042
-#endif
-
-#ifndef IOCTL_OTERM_FONT
-#define IOCTL_OTERM_FONT 0x0802
-#endif
-
-#ifndef IOCTL_OTERM_CLS
-#define IOCTL_OTERM_CLS 0x0102
-#endif
-
-#ifndef IOCTL_OTERM_RESET_SCROLL
-#define IOCTL_OTERM_RESET_SCROLL 0x0202
-#endif
-
-#ifndef COMPACT_UI
-#define COMPACT_UI 0
 #endif
 
 /* uPD765A MSR bits */
@@ -110,6 +95,7 @@ static void delay_us_approx(unsigned int units) {
   }
   intrinsic_ei();
 }
+
 #define RPM_LOOP_DELAY_MS 180U
 #define RPM_FAIL_DELAY_MS 450U
 #define RPM_EXIT_ARM_DELAY_MS 400U
@@ -135,60 +121,6 @@ static const unsigned char debug_enabled = DEBUG_ENABLED;
  * Shows the state DivMMC left the system in.
  */
 static unsigned char startup_bank678;
-#endif
-
-/*
- * Character font buffer captured at startup before ROM paging is modified.
- *
- * Problem: DivMMC loads the program with the 48K BASIC ROM active (containing
- * the character font at $3D00). z88dk's output_char_32 driver uses font base
- * $3C00. When set_motor_off() writes the stale BANK678 shadow to $1FFD, it
- * clears bit 2 and switches the ROM bank away from the 48K BASIC ROM,
- * pointing address $3D00 to wrong data and corrupting all text output.
- *
- * Solution: Copy the 1 KB font ($3C00-$3FFF) to RAM at program start, then
- * redirect z88dk's terminal driver to use the RAM copy via IOCTL_OTERM_FONT.
- * Character rendering is then independent of any ROM paging changes.
- */
-static unsigned char font_ram[1024];
-#if COMPACT_UI && !HEADLESS_ROM_FONT
-static unsigned char font_rom[1024];
-static unsigned char compact_font_active = 1;
-#endif
-
-#ifndef HEADLESS_ROM_FONT
-#define HEADLESS_ROM_FONT 0
-#endif
-
-
-
-static void init_ui_font(void) {
-#if HEADLESS_ROM_FONT
-  /* Headless/OCR builds use ROM glyphs for maximum recognition stability. */
-  memcpy(font_ram, (const void*)0x3C00, sizeof(font_ram));
-#elif COMPACT_UI
-  /* Compact GUI uses a fully custom sprite-like glyph set by default. */
-  memcpy(font_rom, (const void*)0x3C00, sizeof(font_rom));
-  apply_compact_font(font_ram);
-  compact_font_active = 1;
-#else
-  /* Copy ROM font first so paging changes cannot corrupt rendered text. */
-  memcpy(font_ram, (const void*)0x3C00, sizeof(font_ram));
-
-  /* Default build keeps ROM-compatible glyphs for OCR stability. */
-#endif
-
-  ioctl(1, IOCTL_OTERM_FONT, font_ram);
-}
-
-#if COMPACT_UI && !HEADLESS_ROM_FONT
-static void select_compact_font(void) {
-  if (!compact_font_active) {
-    ioctl(1, IOCTL_OTERM_FONT, font_ram);
-    compact_font_active = 1;
-  }
-}
-
 #endif
 
 /* Test results storage */
@@ -266,252 +198,6 @@ static void set_report_status(unsigned char status_code) {
   report_status_code = status_code;
 }
 
-static void ui_term_clear(void) {
-  ioctl(1, IOCTL_OTERM_CLS, 0);
-  ioctl(1, IOCTL_OTERM_RESET_SCROLL, 0);
-}
-
-/* ZX colour IDs */
-#define ZX_COLOUR_BLACK 0
-#define ZX_COLOUR_BLUE 1
-#define ZX_COLOUR_RED 2
-#define ZX_COLOUR_GREEN 4
-#define ZX_COLOUR_WHITE 7
-#define ZX_COLOUR_CYAN 5
-#define ZX_COLOUR_YELLOW 6
-#define ZX_ATTR_BASE 0x5800
-
-#define ZX_PIXELS_BASE 0x4000
-#define ZX_PIXELS_SIZE 0x1800U
-#define ZX_ATTR_SIZE 0x300U
-
-static void ui_attr_set_cell(unsigned char row, unsigned char col,
-                             unsigned char ink, unsigned char paper,
-                             unsigned char bright);
-static void ui_attr_fill(unsigned char ink, unsigned char paper,
-                         unsigned char bright);
-
-static const unsigned char* ui_active_font_ptr(void) {
-#if COMPACT_UI && !HEADLESS_ROM_FONT
-  return compact_font_active ? font_ram : font_rom;
-#else
-  return font_ram;
-#endif
-}
-
-static unsigned short zx_pixel_offset(unsigned char y, unsigned char xbyte) {
-  return (unsigned short)((((unsigned short)(y & 0xC0U)) << 5) |
-                          (((unsigned short)(y & 0x07U)) << 8) |
-                          (((unsigned short)(y & 0x38U)) << 2) | xbyte);
-}
-
-static void ui_screen_put_char(unsigned char row, unsigned char col, char ch) {
-  const unsigned char* font = ui_active_font_ptr();
-  const unsigned char* glyph;
-  unsigned char gy;
-  unsigned char* pixels = (unsigned char*)ZX_PIXELS_BASE;
-
-  if (row >= 24 || col >= 32) return;
-  glyph = &font[((unsigned short)(unsigned char)ch) * 8U];
-  for (gy = 0; gy < 8; gy++) {
-    unsigned char y = (unsigned char)(row * 8U + gy);
-    pixels[zx_pixel_offset(y, col)] = glyph[gy];
-  }
-}
-
-static unsigned char ui_text_screen_active;
-static const char* ui_text_screen_title;
-static const char* ui_text_screen_controls;
-#define UI_TEXT_ROW_STYLE_BLANK 0U
-#define UI_TEXT_ROW_STYLE_CONTROL 1U
-#define UI_TEXT_ROW_STYLE_TEXT 2U
-#define UI_TEXT_ROW_STYLE_RESULT 3U
-static char ui_text_row_cache[24][33];
-static unsigned char ui_text_row_style[24];
-
-static void ui_reset_text_screen_cache(void) {
-  memset(ui_text_row_cache, 0, sizeof(ui_text_row_cache));
-  memset(ui_text_row_style, 0xFF, sizeof(ui_text_row_style));
-  ui_text_screen_active = 0;
-  ui_text_screen_title = 0;
-  ui_text_screen_controls = 0;
-}
-
-static void ui_screen_fill_row(unsigned char row, char fill, unsigned char ink,
-                               unsigned char paper, unsigned char bright) {
-  unsigned char col;
-
-  if (row >= 24) return;
-  for (col = 0; col < 32; col++) {
-    ui_screen_put_char(row, col, fill);
-    ui_attr_set_cell(row, col, ink, paper, bright);
-  }
-}
-
-static void ui_screen_write_row(unsigned char row, const char* text,
-                                unsigned char ink, unsigned char paper,
-                                unsigned char bright) {
-  unsigned char col = 0;
-
-  ui_screen_fill_row(row, ' ', ink, paper, bright);
-  if (!text || row >= 24) return;
-
-  while (*text && col < 32U) {
-    ui_screen_put_char(row, col, *text++);
-    col++;
-  }
-}
-
-static unsigned char ui_line_value_col(const char* text) {
-  unsigned char col = 0;
-
-  if (!text) return 32;
-  while (text[col] && col < 31U) {
-    if (text[col] == ':') {
-      col++;
-      while (text[col] == ' ' && col < 31U) {
-        col++;
-      }
-      return col;
-    }
-    col++;
-  }
-
-  return 32;
-}
-
-static unsigned char ui_line_is_alert(const char* text) {
-  if (!text) return 0;
-  return (unsigned char)(strstr(text, "FAIL") != 0 || strstr(text, "NO REV") != 0 ||
-                     strstr(text, "NOT READY") != 0 ||
-                     strstr(text, "INVALID") != 0 || strstr(text, "BAD") != 0 ||
-                     strstr(text, "N/A") != 0 || strstr(text, "TIMEOUT") != 0 ||
-                     strstr(text, "CHECK MEDIA") != 0 ||
-                     strstr(text, "OUT-OF-RANGE") != 0 ||
-                     strstr(text, "SKIPPED") != 0 ||
-                     strstr(text, "STOPPED") != 0 ||
-                     strstr(text, "ERROR") != 0);
-}
-
-static void ui_highlight_screen_value(unsigned char row,
-                                      unsigned char start_col,
-                                      unsigned char ink, unsigned char paper,
-                                      unsigned char bright) {
-  unsigned char col;
-
-  if (start_col >= 32U) return;
-  for (col = start_col; col < 32U; col++) {
-    ui_attr_set_cell(row, col, ink, paper, bright);
-  }
-}
-
-static void ui_style_screen_text_row(unsigned char row, const char* text) {
-  unsigned char value_col;
-  unsigned char label_end;
-  unsigned char col;
-
-  if (!text || !*text || row >= 24U) return;
-
-  value_col = ui_line_value_col(text);
-  if (value_col >= 32U) return;
-
-  label_end = value_col;
-  while (label_end > 0U && text[(unsigned char)(label_end - 1U)] == ' ') {
-    label_end--;
-  }
-
-  for (col = 0; col < label_end && col < 32U; col++) {
-    ui_attr_set_cell(row, col, ZX_COLOUR_BLUE, ZX_COLOUR_WHITE, 1);
-  }
-
-  ui_highlight_screen_value(
-      row, value_col, ZX_COLOUR_BLACK,
-      ui_line_is_alert(text) ? ZX_COLOUR_YELLOW : ZX_COLOUR_CYAN, 1);
-}
-
-static void ui_render_cached_text_row(unsigned char row, const char* text,
-                                      unsigned char row_style) {
-  const char* safe_text = text ? text : "";
-
-  if (row >= 24U) return;
-  if (ui_text_row_style[row] == row_style &&
-      strcmp(ui_text_row_cache[row], safe_text) == 0) {
-    return;
-  }
-
-  ui_screen_write_row(row, safe_text, ZX_COLOUR_BLACK, ZX_COLOUR_WHITE, 0);
-
-  if (row_style == UI_TEXT_ROW_STYLE_TEXT ||
-      row_style == UI_TEXT_ROW_STYLE_RESULT) {
-    ui_style_screen_text_row(row, safe_text);
-  }
-
-  strncpy(ui_text_row_cache[row], safe_text, 32U);
-  ui_text_row_cache[row][32] = '\0';
-  ui_text_row_style[row] = row_style;
-}
-
-static void ui_begin_text_screen(const char* title, const char* controls) {
-  unsigned char col;
-  static const unsigned char STRIPE_PAPER[8] = {0, 1, 2, 3, 4, 5, 6, 7};
-  static const unsigned char STRIPE_INK[8] = {7, 7, 7, 7, 0, 0, 0, 0};
-  char title_row[33];
-
-#if COMPACT_UI && !HEADLESS_ROM_FONT
-  /* Force compact 6x6-style font in human mode before drawing test screens. */
-  select_compact_font();
-#endif
-
-  /* Pointer-equality cache is safe because callers pass stable string literals. */
-  if (ui_text_screen_active && ui_text_screen_title == title &&
-      ui_text_screen_controls == controls) {
-    return;
-  }
-
-  memset(ui_text_row_cache, 0, sizeof(ui_text_row_cache));
-  memset(ui_text_row_style, 0xFF, sizeof(ui_text_row_style));
-
-  ui_term_clear();
-  ui_attr_fill(ZX_COLOUR_BLACK, ZX_COLOUR_WHITE, 0);
-
-  title_row[0] = ' ';
-  strncpy(&title_row[1], title ? title : "", 31U);
-  title_row[32] = '\0';
-  ui_screen_write_row(0, title_row, ZX_COLOUR_WHITE, ZX_COLOUR_BLACK, 1);
-  ui_screen_write_row(1, "------------------------------", ZX_COLOUR_BLACK,
-                      ZX_COLOUR_WHITE, 0);
-
-  for (col = 0; col < 8; col++) {
-    ui_attr_set_cell(0, (unsigned char)(24 + col), STRIPE_INK[col],
-                     STRIPE_PAPER[col], 1);
-  }
-
-  ui_text_screen_active = 1;
-  ui_text_screen_title = title;
-  ui_text_screen_controls = controls;
-}
-
-static void ui_attr_set_cell(unsigned char row, unsigned char col,
-                             unsigned char ink, unsigned char paper,
-                             unsigned char bright) {
-  volatile unsigned char* attr = (volatile unsigned char*)ZX_ATTR_BASE;
-  if (row >= 24 || col >= 32) return;
-  attr[(unsigned short)row * 32U + col] =
-      (unsigned char)(((bright ? 1U : 0U) << 6) | ((paper & 0x07U) << 3) |
-                      (ink & 0x07U));
-}
-
-static void ui_attr_fill(unsigned char ink, unsigned char paper,
-                         unsigned char bright) {
-  unsigned char row;
-  unsigned char col;
-  for (row = 0; row < 24; row++) {
-    for (col = 0; col < 32; col++) {
-      ui_attr_set_cell(row, col, ink, paper, bright);
-    }
-  }
-}
-
 static void ui_apply_menu_row_visual(unsigned char index,
                                      unsigned char selected) {
   const MenuItem* items = menu_items();
@@ -539,43 +225,6 @@ static void ui_update_main_menu_selection(unsigned char old_index,
   if (old_index == new_index) return;
   ui_apply_menu_row_visual(old_index, 0);
   ui_apply_menu_row_visual(new_index, 1);
-}
-
-static void ui_render_text_screen(const char* title, const char* controls,
-                                  const char* const* lines,
-                                  unsigned char line_count,
-                                  const char* result) {
-  unsigned char i;
-  unsigned char row;
-
-  ui_begin_text_screen(title, controls);
-
-  if (controls) {
-    ui_render_cached_text_row(2, controls, UI_TEXT_ROW_STYLE_CONTROL);
-  } else {
-    ui_render_cached_text_row(2, "", UI_TEXT_ROW_STYLE_BLANK);
-  }
-
-  row = 3;
-  for (i = 0; i < line_count && row < 23U; i++, row++) {
-    if (lines[i]) {
-      ui_render_cached_text_row(row, lines[i], UI_TEXT_ROW_STYLE_TEXT);
-    } else {
-      ui_render_cached_text_row(row, "", UI_TEXT_ROW_STYLE_BLANK);
-    }
-  }
-
-  if (result && (unsigned char)(row + 1U) < 24U) {
-    ui_render_cached_text_row(row, "", UI_TEXT_ROW_STYLE_BLANK);
-    ui_render_cached_text_row((unsigned char)(row + 1U), result,
-                              UI_TEXT_ROW_STYLE_RESULT);
-    row = (unsigned char)(row + 2U);
-  }
-
-  while (row < 24U) {
-    ui_render_cached_text_row(row, "", UI_TEXT_ROW_STYLE_BLANK);
-    row++;
-  }
 }
 
 static void ui_render_main_menu(unsigned char selected_index,
@@ -658,7 +307,8 @@ static void build_report_bar(char out[9]) {
   out[8] = '\0';
 }
 
-static void build_report_row(char* out, const char* label, unsigned char state) {
+static void build_report_row(char* out, const char* label,
+                             unsigned char state) {
   char bar[9];
   build_report_bar(bar);
   sprintf(out, "%-6s [%s] %s", label, bar, report_row_state_text(state));
@@ -694,7 +344,8 @@ static void ui_colour_report_row(unsigned char row, const char* text,
         if (state == REPORT_ROW_PASS) {
           ui_attr_set_cell(row, bar_col, ZX_COLOUR_BLACK, ZX_COLOUR_GREEN, 1);
         } else if (state == REPORT_ROW_FAIL) {
-          /* Spectrum has no orange; red-on-yellow gives a strong warning tone. */
+          /* Spectrum has no orange; red-on-yellow gives a strong warning tone.
+           */
           ui_attr_set_cell(row, bar_col, ZX_COLOUR_RED, ZX_COLOUR_YELLOW, 1);
         } else {
           ui_attr_set_cell(row, bar_col, ZX_COLOUR_BLACK, ZX_COLOUR_WHITE, 1);
@@ -790,18 +441,17 @@ static void ui_render_report_card(void) {
     last_state = last_test_failed ? REPORT_ROW_FAIL : REPORT_ROW_PASS;
   }
 
-  motor_state = report_row_state(results.motor_test_ran,
-                                 results.motor_test_pass);
-  drive_state = report_row_state(results.sense_drive_ran,
-                                 results.sense_drive_pass);
-  recal_state = report_row_state(results.recalibrate_ran,
-                                 results.recalibrate_pass);
+  motor_state =
+      report_row_state(results.motor_test_ran, results.motor_test_pass);
+  drive_state =
+      report_row_state(results.sense_drive_ran, results.sense_drive_pass);
+  recal_state =
+      report_row_state(results.recalibrate_ran, results.recalibrate_pass);
   seek_state = report_row_state(results.seek_ran, results.seek_pass);
   readid_state = report_row_state(results.read_id_ran, results.read_id_pass);
-  overall_state = (total == 5U)
-                      ? REPORT_ROW_PASS
-                      : (any_report_test_ran() ? REPORT_ROW_FAIL
-                                               : REPORT_ROW_NOT_RUN);
+  overall_state = (total == 5U) ? REPORT_ROW_PASS
+                                : (any_report_test_ran() ? REPORT_ROW_FAIL
+                                                         : REPORT_ROW_NOT_RUN);
 
   build_report_row(line_last, "LAST", last_state);
   build_report_row(line_motor, "MOTOR", motor_state);
@@ -824,7 +474,8 @@ static void ui_render_report_card(void) {
   ui_render_text_screen("TEST REPORT CARD", report_controls_text(), lines, 9,
                         report_result_text());
 
-  /* Rows are fixed by ui_render_text_screen: controls at row 2, lines start at row 3. */
+  /* Rows are fixed by ui_render_text_screen: controls at row 2, lines start at
+   * row 3. */
   ui_colour_report_row(4U, line_last, last_state);
   ui_colour_report_row(5U, line_motor, motor_state);
   ui_colour_report_row(6U, line_drive, drive_state);
@@ -924,10 +575,10 @@ static const KeyMap keymap[] = {
     {0xFBFE, 0x01, 'Q'}, {0xFBFE, 0x08, 'R'}, {0x7FFE, 0x01, ' '},
     {0xBFFE, 0x01, '\n'}};
 
-  enum { RUNTIME_KEYMAP_COUNT = sizeof(keymap) / sizeof(keymap[0]) };
-  static unsigned char runtime_key_latched[RUNTIME_KEYMAP_COUNT];
-  static unsigned char runtime_break_latched;
-  static int runtime_pending_key = -1;
+enum { RUNTIME_KEYMAP_COUNT = sizeof(keymap) / sizeof(keymap[0]) };
+static unsigned char runtime_key_latched[RUNTIME_KEYMAP_COUNT];
+static unsigned char runtime_break_latched;
+static int runtime_pending_key = -1;
 
 static unsigned char x_pressed(void) {
   return (unsigned char)((inportb(0xFEFE) & 0x04) == 0);
@@ -964,8 +615,8 @@ static int scan_runtime_key_event(void) {
   }
 
   for (i = 0; i < RUNTIME_KEYMAP_COUNT; i++) {
-    pressed =
-        (unsigned char)((inportb(keymap[i].row_port) & keymap[i].bit_mask) == 0);
+    pressed = (unsigned char)((inportb(keymap[i].row_port) &
+                               keymap[i].bit_mask) == 0);
     if (pressed) {
       if (runtime_key_latched[i]) {
         continue;
@@ -1082,7 +733,8 @@ static unsigned char fdc_read(unsigned char* out) {
   return 1;
 }
 
-/* Execution-phase reads must be as tight as possible to avoid ST1.OR overruns. */
+/* Execution-phase reads must be as tight as possible to avoid ST1.OR overruns.
+ */
 static unsigned char fdc_read_data_byte(unsigned char* out) {
   if (!fdc_wait_rqm(1, FDC_RQM_TIMEOUT)) return 0;
   *out = inportb(FDC_DATA_PORT);
@@ -1372,14 +1024,14 @@ static void test_motor_and_drive_status(int interactive) {
     strcpy(line3, "WPROT : ---");
     strcpy(line4, "TRACK0: ---");
     strcpy(line5, "FAULT : ---");
-    ui_render_text_screen(
-      "MOTOR AND DRIVE STATUS", single_shot_test_controls(interactive),
-      lines, 6, "RESULT: READY");
+    ui_render_text_screen("MOTOR AND DRIVE STATUS",
+                          single_shot_test_controls(interactive), lines, 6,
+                          "RESULT: READY");
     delay_ms(TEST_CARD_STATE_DELAY_MS);
     strcpy(line6, "MOTOR : ON");
-    ui_render_text_screen(
-      "MOTOR AND DRIVE STATUS", single_shot_test_controls(interactive),
-      lines, 6, "RESULT: RUNNING");
+    ui_render_text_screen("MOTOR AND DRIVE STATUS",
+                          single_shot_test_controls(interactive), lines, 6,
+                          "RESULT: RUNNING");
   }
 
   plus3_motor_on();
@@ -1406,9 +1058,8 @@ static void test_motor_and_drive_status(int interactive) {
   last_test_failed = (unsigned char)(results.sense_drive_pass == 0);
   strcpy(line6, "MOTOR : OFF");
   ui_render_text_screen(
-    "MOTOR AND DRIVE STATUS", single_shot_test_controls(interactive), lines,
-    6,
-      results.sense_drive_pass ? "RESULT: PASS" : "RESULT: FAIL");
+      "MOTOR AND DRIVE STATUS", single_shot_test_controls(interactive), lines,
+      6, results.sense_drive_pass ? "RESULT: PASS" : "RESULT: FAIL");
 }
 
 static void test_read_id_probe(int interactive) {
@@ -1485,15 +1136,15 @@ static void test_read_id_probe(int interactive) {
   } else {
     sprintf(line6, "ID    : %s", read_id_failure_reason(st1, st2));
   }
-  ui_render_text_screen(
-      "DRIVE READ ID PROBE", single_shot_test_controls(interactive), lines, 6,
-      results.read_id_pass ? "RESULT: PASS" : "RESULT: FAIL");
+  ui_render_text_screen("DRIVE READ ID PROBE",
+                        single_shot_test_controls(interactive), lines, 6,
+                        results.read_id_pass ? "RESULT: PASS" : "RESULT: FAIL");
 }
 
 static void test_recal_seek_track2(int interactive) {
   unsigned char st0 = 0, pcn = 0;
   unsigned char st3 = 0;
-  unsigned char target = 2;
+  unsigned char track_target = 2;
   unsigned char recal_ok = 0;
   unsigned char seek_ok = 0;
   unsigned char show_live_card = show_selected_test_cards();
@@ -1544,10 +1195,9 @@ static void test_recal_seek_track2(int interactive) {
                           "RESULT: FAIL");
     return;
   }
-
+  strcpy(line1, "READY : YES");
   if (!cmd_recalibrate(FDC_DRIVE) ||
       !wait_seek_complete(FDC_DRIVE, &st0, &pcn)) {
-    strcpy(line1, "READY : YES");
     strcpy(line2, "RECAL : FAIL");
     strcpy(line3, "SEEK  : SKIPPED");
     sprintf(line4, "DETAIL: ST0=%02X PCN=%u", st0, pcn);
@@ -1562,7 +1212,7 @@ static void test_recal_seek_track2(int interactive) {
   }
   recal_ok = (unsigned char)(pcn == 0);
 
-  if (!cmd_seek(FDC_DRIVE, 0, target) ||
+  if (!cmd_seek(FDC_DRIVE, 0, track_target) ||
       !wait_seek_complete(FDC_DRIVE, &st0, &pcn)) {
     strcpy(line1, "READY : YES");
     sprintf(line2, "RECAL : %s", pass_fail(recal_ok));
@@ -1577,14 +1227,13 @@ static void test_recal_seek_track2(int interactive) {
                           "RESULT: FAIL");
     return;
   }
-  seek_ok = (unsigned char)(pcn == target);
+  seek_ok = (unsigned char)(pcn == track_target);
 
   results.recalibrate_pass = recal_ok;
   results.seek_pass = seek_ok;
   plus3_motor_off();
   last_test_failed =
       (unsigned char)(!(results.recalibrate_pass && results.seek_pass));
-  strcpy(line1, "READY : YES");
   sprintf(line2, "RECAL : %s", pass_fail(results.recalibrate_pass));
   sprintf(line3, "SEEK  : %s", pass_fail(results.seek_pass));
   sprintf(line4, "DETAIL: TRACK %u", (unsigned int)pcn);
@@ -1622,7 +1271,7 @@ static void test_seek_interactive(void) {
                           "RESULT: FAIL");
     return;
   }
-
+  
   for (;;) {
     sprintf(line1, "TRACK : %u", (unsigned int)target);
     sprintf(line2, "LAST  : ST0=%02X", st0);
