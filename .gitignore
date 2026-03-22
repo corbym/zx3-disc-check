@@ -82,3 +82,4 @@ _deps/
 .idea/c_cpp_properties.json
 
 /.idea/copilotDiffState.xml
+/.idea/zx3-disk-test.CMake.iml
