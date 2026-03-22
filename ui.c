@@ -202,9 +202,9 @@ static const unsigned char* ui_active_font_ptr(void) {
 #endif
 }
 
-void ui_attr_set_cell(const unsigned char row, unsigned char col,
-                      const unsigned char ink, unsigned char paper,
-                      const unsigned char bright) {
+void ui_attr_set_cell(unsigned char row, unsigned char col,
+                      unsigned char ink, unsigned char paper,
+                      unsigned char bright) {
   volatile unsigned char* attr = (volatile unsigned char*)ZX_ATTR_BASE;
   if (row >= 24 || col >= 32) return;
   attr[(unsigned short)row * 32U + col] =
@@ -214,14 +214,14 @@ void ui_attr_set_cell(const unsigned char row, unsigned char col,
 
 /* Fill all 768 attribute cells in one memset (replaces 768 ui_attr_set_cell
  * calls in the original loop, critical for first-render latency on Z80). */
-void ui_attr_fill(const unsigned char ink, const unsigned char paper, const unsigned char bright) {
+void ui_attr_fill(unsigned char ink, unsigned char paper, unsigned char bright) {
   unsigned char attr_byte =
       (unsigned char)((bright ? 1U : 0U) << 6 | (paper & 0x07U) << 3 |
                       ink & 0x07U);
   memset((void*)ZX_ATTR_BASE, attr_byte, ZX_ATTR_SIZE);
 }
 
-void ui_screen_put_char(const unsigned char row, const unsigned char col, const char ch) {
+void ui_screen_put_char(unsigned char row, unsigned char col, char ch) {
   const unsigned char* font = ui_active_font_ptr();
   unsigned char* pixels = (unsigned char*)ZX_PIXELS_BASE;
 
@@ -341,10 +341,10 @@ static unsigned char ui_line_is_alert(const char* text) {
 }
 
 /* Colour N consecutive attribute cells starting at (row, start_col). */
-void ui_attr_set_run(const unsigned char row, const unsigned char start_col,
-                            const unsigned char count,
-                            const unsigned char ink, const unsigned char paper,
-                            unsigned char bright) {
+void ui_attr_set_run(unsigned char row, unsigned char start_col,
+                     unsigned char count,
+                     unsigned char ink, unsigned char paper,
+                     unsigned char bright) {
   volatile unsigned char *attr = (volatile unsigned char *)ZX_ATTR_BASE;
   unsigned char attr_byte;
   unsigned char safe_count;

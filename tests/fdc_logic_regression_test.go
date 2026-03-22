@@ -151,17 +151,13 @@ func TestAttrFillUsesMemset(t *testing.T) {
 }
 
 func TestFillRowUsesMemset(t *testing.T) {
+	// ui_screen_fill_row was merged into ui_screen_write_row; it must not be
+	// reintroduced as a separate function (double pixel-write regression).
+	// The memset property is now enforced by TestWriteRowDoesNotCallFillRow.
 	src := loadUiSource(t)
-	body := extractRenderFuncBody(t, src, `(?:static\s+)?void ui_screen_fill_row\(unsigned char row`)
-
-	if !strings.Contains(body, "memset") {
-		t.Fatalf("ui_screen_fill_row does not use memset; slow per-cell loop may have been reintroduced")
-	}
-	if strings.Contains(body, "ui_screen_put_char") {
-		t.Fatalf("ui_screen_fill_row must not call ui_screen_put_char; use scanline memset for pixel fill")
-	}
-	if strings.Contains(body, "ui_attr_set_cell") {
-		t.Fatalf("ui_screen_fill_row must not call ui_attr_set_cell; use memset for row attr fill")
+	re := regexp.MustCompile(`(?s)(?:static\s+)?void ui_screen_fill_row\(unsigned char row[^)]*\) \{`)
+	if re.MatchString(src) {
+		t.Fatalf("ui_screen_fill_row must not exist as a separate function; its pixel-fill logic belongs in ui_screen_write_row to avoid double pixel-write")
 	}
 }
 

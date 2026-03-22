@@ -699,11 +699,20 @@ static void test_read_id(int interactive) {
         return;
     }
 
-    /* Try to get to track 0 first */
-    cmd_recalibrate(FDC_DRIVE);
+    /* Try to get to track 0 first — abort if RECAL fails */
     {
-        FdcSeekResult seek_result;
-        wait_seek_complete(FDC_DRIVE, &seek_result);
+        FdcSeekResult recal_result;
+        recal_result.st0 = 0;
+        if (!cmd_recalibrate(FDC_DRIVE) ||
+            !wait_seek_complete(FDC_DRIVE, &recal_result) ||
+            !seek_completion_ok(recal_result.st0)) {
+            set_detail_failure(&read_id_card, "RECAL FAILED");
+            results.read_id_pass = 0;
+            last_test_failed = 1;
+            plus3_motor_off();
+            render_read_id(&read_id_card, TEST_CARD_RESULT_FAIL);
+            return;
+        }
     }
 
     unsigned char ok = cmd_read_id(FDC_DRIVE, 0, &rid_result);
@@ -900,6 +909,7 @@ static void test_read_track_data_loop(void) {
     FdcSeekResult seek_result;
     unsigned char current_track = 0;
     unsigned char seek_required = 1;
+    unsigned char recal_required = 1;
     unsigned char track_key_latch = 0;
     unsigned char drive_status_st3 = 0;
     unsigned int pass_count = 0;
@@ -946,12 +956,28 @@ static void test_read_track_data_loop(void) {
             render_track_loop_drive_not_ready(current_track, pass_count,
                                               fail_count, drive_status_st3);
             seek_required = 1;
+            recal_required = 1;
             ui_redraw_required = 0;
             delay_ms(20);
             continue;
         }
 
         if (seek_required) {
+            if (recal_required) {
+                FdcSeekResult recal_result;
+                recal_result.st0 = 0;
+                if (!cmd_recalibrate(FDC_DRIVE) ||
+                    !wait_seek_complete(FDC_DRIVE, &recal_result) ||
+                    !seek_completion_ok(recal_result.st0)) {
+                    fail_count++;
+                    render_track_loop_seek_fail(current_track, pass_count,
+                                                fail_count, recal_result.st0);
+                    ui_redraw_required = 0;
+                    delay_ms(20);
+                    continue;
+                }
+                recal_required = 0;
+            }
             if (!cmd_seek(FDC_DRIVE, 0, current_track) ||
                 !wait_seek_complete(FDC_DRIVE, &seek_result)) {
                 fail_count++;
@@ -1046,6 +1072,15 @@ static void test_rpm_checker(void) {
 
     plus3_motor_on();
     loop_start_tick = frame_ticks();
+
+    /* Best-effort initial RECAL to establish PCN=0 before per-iteration cmd_seek */
+    {
+        FdcSeekResult recal_result;
+        if (wait_drive_ready(FDC_DRIVE, 0, &st3) &&
+            cmd_recalibrate(FDC_DRIVE)) {
+            wait_seek_complete(FDC_DRIVE, &recal_result);
+        }
+    }
 
     while (!(rpm_exit_armed(loop_start_tick) && loop_exit_requested())) {
 #if HEADLESS_ROM_FONT
