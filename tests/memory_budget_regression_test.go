@@ -30,6 +30,7 @@ func TestTapCodeSizeBudget(t *testing.T) {
 	if sz > maxCodeBinBytes {
 		t.Fatalf("disk_tester_CODE.bin too large: %d bytes (limit %d). This often precedes menu-missing/'Drive not ready' smoke failures due to memory pressure", sz, maxCodeBinBytes)
 	}
+	t.Logf("Memory OK: %d bytes", sz)
 }
 
 func TestMapHeapStackHeadroom(t *testing.T) {

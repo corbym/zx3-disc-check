@@ -1265,3 +1265,23 @@ void interactive_seek_card_render(const InteractiveSeekCard* card,
                                   TestCardResult result) {
   test_card_render_result(&card->base, result);
 }
+
+/* Reset functions required by ui.h declarations */
+void motor_drive_card_reset(MotorDriveCard* card) {
+  motor_drive_card_set_motor_off(card);
+  motor_drive_card_set_unknown(card);
+}
+
+void read_id_probe_card_reset(ReadIdProbeCard* card) {
+  read_id_probe_card_set_unknown(card);
+  read_id_probe_card_set_id_status(card, "WAITING");
+}
+
+void recal_seek_card_reset(RecalSeekCard* card) {
+  recal_seek_card_set_unknown(card);
+}
+
+void read_id_card_reset(ReadIdCard* card) {
+  read_id_card_set_waiting(card);
+}
+

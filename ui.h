@@ -208,6 +208,7 @@ void rpm_loop_card_set_sample_ready(RpmLoopCard* card);
 void rpm_loop_card_set_stopped(RpmLoopCard* card);
 void rpm_loop_card_render(const RpmLoopCard* card, TestCardResult result);
 void motor_drive_card_init(MotorDriveCard* card, const char* controls);
+void motor_drive_card_reset(MotorDriveCard* card);
 void motor_drive_card_set_unknown(MotorDriveCard* card);
 void motor_drive_card_set_motor_on(MotorDriveCard* card);
 void motor_drive_card_set_motor_off(MotorDriveCard* card);
@@ -216,6 +217,7 @@ void motor_drive_card_set_drive_status(MotorDriveCard* card,
                                        unsigned char st3);
 void motor_drive_card_render(const MotorDriveCard* card, TestCardResult result);
 void read_id_probe_card_init(ReadIdProbeCard* card, const char* controls);
+void read_id_probe_card_reset(ReadIdProbeCard* card);
 void read_id_probe_card_set_unknown(ReadIdProbeCard* card);
 void read_id_probe_card_set_id_status(ReadIdProbeCard* card,
                                       const char* status_value);
@@ -230,6 +232,7 @@ void read_id_probe_card_set_id_failure(ReadIdProbeCard* card,
 void read_id_probe_card_render(const ReadIdProbeCard* card,
                                TestCardResult result);
 void recal_seek_card_init(RecalSeekCard* card, const char* controls);
+void recal_seek_card_reset(RecalSeekCard* card);
 void recal_seek_card_set_unknown(RecalSeekCard* card);
 void recal_seek_card_set_ready_yes(RecalSeekCard* card);
 void recal_seek_card_set_ready_fail_st3(RecalSeekCard* card,
@@ -247,6 +250,7 @@ void recal_seek_card_set_detail_track(RecalSeekCard* card,
                                       unsigned char track);
 void recal_seek_card_render(const RecalSeekCard* card, TestCardResult result);
 void read_id_card_init(ReadIdCard* card, const char* controls);
+void read_id_card_reset(ReadIdCard* card);
 void read_id_card_set_waiting(ReadIdCard* card);
 void read_id_card_set_reading(ReadIdCard* card);
 void read_id_card_set_drive_not_ready(ReadIdCard* card, unsigned char st3);
@@ -300,6 +304,7 @@ void interactive_seek_card_render(const InteractiveSeekCard* card,
     rpm_loop_card_render((card_ptr), (result_value))
 
 #define set_motor_drive_unknown(card_ptr) motor_drive_card_set_unknown((card_ptr))
+#define reset_motor_drive(card_ptr) motor_drive_card_reset((card_ptr))
 #define set_card_motor_on(card_ptr) motor_drive_card_set_motor_on((card_ptr))
 #define set_card_motor_off(card_ptr) motor_drive_card_set_motor_off((card_ptr))
 #define set_motor_drive_status(card_ptr, have_st3, st3_value)                    \
@@ -309,6 +314,7 @@ void interactive_seek_card_render(const InteractiveSeekCard* card,
 
 #define set_read_id_probe_unknown(card_ptr)                                      \
     read_id_probe_card_set_unknown((card_ptr))
+#define reset_read_id_probe(card_ptr) read_id_probe_card_reset((card_ptr))
 #define set_id_waiting(card_ptr)                                                 \
     read_id_probe_card_set_id_status((card_ptr), "WAITING")
 #define set_id_probing(card_ptr)                                                 \
@@ -328,6 +334,7 @@ void interactive_seek_card_render(const InteractiveSeekCard* card,
     read_id_probe_card_render((card_ptr), (result_value))
 
 #define set_recal_seek_unknown(card_ptr) recal_seek_card_set_unknown((card_ptr))
+#define reset_recal_seek(card_ptr) recal_seek_card_reset((card_ptr))
 #define set_ready_yes(card_ptr) recal_seek_card_set_ready_yes((card_ptr))
 #define set_recal_seek_ready_fail_st3(card_ptr, st3_value)                       \
     recal_seek_card_set_ready_fail_st3((card_ptr), (st3_value))
@@ -349,6 +356,10 @@ void interactive_seek_card_render(const InteractiveSeekCard* card,
     recal_seek_card_set_seek_status((card_ptr), RECAL_SEEK_STATUS_SKIPPED)
 #define set_detail_check_media(card_ptr)                                         \
     recal_seek_card_set_detail_status((card_ptr), "CHECK MEDIA")
+#define set_detail_recal_cmd_fail(card_ptr)                                      \
+    recal_seek_card_set_detail_status((card_ptr), "RECAL CMD FAIL")
+#define set_detail_seek_cmd_fail(card_ptr)                                       \
+    recal_seek_card_set_detail_status((card_ptr), "SEEK CMD FAIL")
 #define set_detail_st0_pcn(card_ptr, st0_value, pcn_value)                       \
     recal_seek_card_set_detail_st0_pcn((card_ptr), (st0_value), (pcn_value))
 #define set_detail_track(card_ptr, track_value)                                  \
@@ -374,6 +385,7 @@ void interactive_seek_card_render(const InteractiveSeekCard* card,
     interactive_seek_card_render((card_ptr), (result_value))
 
 #define set_waiting(card_ptr) read_id_card_set_waiting((card_ptr))
+#define reset_read_id(card_ptr) read_id_card_reset((card_ptr))
 #define set_reading(card_ptr) read_id_card_set_reading((card_ptr))
 #define set_drive_not_ready(card_ptr, st3_value)                                 \
     read_id_card_set_drive_not_ready((card_ptr), (st3_value))

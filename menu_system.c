@@ -243,12 +243,21 @@ void menu_update_selection(unsigned char old_index, unsigned char new_index) {
     menu_apply_row_visual(new_index, 1);
 }
 
+static void menu_status_value_text(char *out, unsigned char total_pass) {
+    if (!out) return;
+    if (total_pass == 0U) {
+        strcpy(out, "NO TESTS RUN");
+    } else {
+        sprintf(out, "%u/5 PASS", (unsigned int)total_pass);
+    }
+}
+
 void menu_render_full(unsigned char selected_index, unsigned char total_pass) {
     const MenuItem *items = menu_items();
-    unsigned char count = menu_item_count();
+    const unsigned char count = menu_item_count();
     unsigned char i;
     unsigned char col;
-    char status_line[29];
+    char status_value[20];
     static const unsigned char STRIPE_PAPER[8] = {0, 1, 2, 3, 4, 5, 6, 7};
     static const unsigned char STRIPE_INK[8]   = {7, 7, 7, 7, 0, 0, 0, 0};
 
@@ -256,12 +265,8 @@ void menu_render_full(unsigned char selected_index, unsigned char total_pass) {
 
     ui_term_clear();
     printf(" ZX +3 DISK TESTER\n");
-    if (total_pass == 0) {
-        strcpy(status_line, "STATUS: NO TESTS RUN");
-    } else {
-        sprintf(status_line, "STATUS: %u/5 PASS", (unsigned int)total_pass);
-    }
-    printf("%s\n\n", status_line);
+    menu_status_value_text(status_value, total_pass);
+    printf("STATUS: %s\n\n", status_value);
 
     for (i = 0; i < count; i++) {
         printf(" %s\n", items[i].label);
