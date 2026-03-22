@@ -25,17 +25,17 @@
 #define LABEL_PCN     "PCN   : "
 #define LABEL_RESULT  "RESULT: "
 
-/* Row value string constants — single definition guarantees one copy in ROM. */
-static const char s_ready[]         = "READY";
-static const char s_running[]       = "RUNNING";
-static const char s_complete[]      = "COMPLETE";
-static const char s_idle[]          = "IDLE";
-static const char s_pass[]          = "PASS";
-static const char s_fail[]          = "FAIL";
-static const char s_stopped[]       = "STOPPED";
-static const char s_invalid[]       = "INVALID";
-static const char s_unknown[]       = "UNKNOWN";
-static const char s_readable_disk[] = "READABLE DISK REQUIRED";
+/* Row value string constants — #define lets the optimiser share literals. */
+#define S_READY         "READY"
+#define S_RUNNING       "RUNNING"
+#define S_COMPLETE      "COMPLETE"
+#define S_IDLE          "IDLE"
+#define S_PASS          "PASS"
+#define S_FAIL          "FAIL"
+#define S_STOPPED       "STOPPED"
+#define S_INVALID       "INVALID"
+#define S_UNKNOWN       "UNKNOWN"
+#define S_READABLE_DISK "READABLE DISK REQUIRED"
 
 /* ----------------------------------------------------------------------- */
 /* Base TestCard operations                                                  */
@@ -43,8 +43,6 @@ static const char s_readable_disk[] = "READABLE DISK REQUIRED";
 
 void test_card_init(TestCard *card, const char *title, const char *controls,
                     unsigned char line_count) {
-    unsigned char i;
-
     if (line_count > TEST_CARD_MAX_LINES) {
         line_count = TEST_CARD_MAX_LINES;
     }
@@ -52,7 +50,7 @@ void test_card_init(TestCard *card, const char *title, const char *controls,
     card->title = title;
     card->controls = controls;
     card->line_count = line_count;
-    for (i = 0; i < TEST_CARD_MAX_LINES; i++) {
+    for (unsigned char i = 0; i < TEST_CARD_MAX_LINES; i++) {
         card->text[i][0] = '\0';
         card->lines[i] = card->text[i];
     }
@@ -109,15 +107,15 @@ void test_card_render(const TestCard *card, const char *result_label,
 
 static const char *test_card_result_text(TestCardResult result) {
     switch (result) {
-        case TEST_CARD_RESULT_READY: return s_ready;
-        case TEST_CARD_RESULT_RUNNING: return s_running;
+        case TEST_CARD_RESULT_READY: return S_READY;
+        case TEST_CARD_RESULT_RUNNING: return S_RUNNING;
         case TEST_CARD_RESULT_ACTIVE: return "ACTIVE";
-        case TEST_CARD_RESULT_PASS: return s_pass;
-        case TEST_CARD_RESULT_FAIL: return s_fail;
-        case TEST_CARD_RESULT_COMPLETE: return s_complete;
-        case TEST_CARD_RESULT_STOPPED: return s_stopped;
+        case TEST_CARD_RESULT_PASS: return S_PASS;
+        case TEST_CARD_RESULT_FAIL: return S_FAIL;
+        case TEST_CARD_RESULT_COMPLETE: return S_COMPLETE;
+        case TEST_CARD_RESULT_STOPPED: return S_STOPPED;
         case TEST_CARD_RESULT_OUT_OF_RANGE: return "OUT-OF-RANGE";
-        default: return s_idle;
+        default: return S_IDLE;
     }
 }
 
@@ -135,10 +133,10 @@ static const char *yes_no_text(unsigned char flag) {
 
 static const char *recal_seek_status_text(RecalSeekStatus status) {
     switch (status) {
-        case RECAL_SEEK_STATUS_RUNNING: return s_running;
+        case RECAL_SEEK_STATUS_RUNNING: return S_RUNNING;
         case RECAL_SEEK_STATUS_PENDING: return "PENDING";
-        case RECAL_SEEK_STATUS_PASS: return s_pass;
-        case RECAL_SEEK_STATUS_FAIL: return s_fail;
+        case RECAL_SEEK_STATUS_PASS: return S_PASS;
+        case RECAL_SEEK_STATUS_FAIL: return S_FAIL;
         case RECAL_SEEK_STATUS_SKIPPED: return "SKIPPED";
         default: return "---";
     }
@@ -163,8 +161,8 @@ static void card_fill_st3_fields(TestCard *tc, unsigned char base_row,
 
 static const char *report_card_state_text(ReportCardState state) {
     switch (state) {
-        case REPORT_CARD_STATE_PASS: return s_pass;
-        case REPORT_CARD_STATE_FAIL: return s_fail;
+        case REPORT_CARD_STATE_PASS: return S_PASS;
+        case REPORT_CARD_STATE_FAIL: return S_FAIL;
         default: return "NOT RUN";
     }
 }
@@ -177,18 +175,18 @@ static const char *report_card_controls_text(ReportCardPhase phase) {
 
 static const char *report_card_result_text(ReportCardPhase phase) {
     switch (phase) {
-        case REPORT_CARD_PHASE_READY: return s_ready;
-        case REPORT_CARD_PHASE_RUNNING: return s_running;
-        case REPORT_CARD_PHASE_COMPLETE: return s_complete;
-        default: return s_idle;
+        case REPORT_CARD_PHASE_READY: return S_READY;
+        case REPORT_CARD_PHASE_RUNNING: return S_RUNNING;
+        case REPORT_CARD_PHASE_COMPLETE: return S_COMPLETE;
+        default: return S_IDLE;
     }
 }
 
 static const char *report_card_status_text(ReportCardPhase phase) {
     switch (phase) {
-        case REPORT_CARD_PHASE_READY: return s_ready;
-        case REPORT_CARD_PHASE_RUNNING: return s_running;
-        case REPORT_CARD_PHASE_COMPLETE: return s_complete;
+        case REPORT_CARD_PHASE_READY: return S_READY;
+        case REPORT_CARD_PHASE_RUNNING: return S_RUNNING;
+        case REPORT_CARD_PHASE_COMPLETE: return S_COMPLETE;
         default: return "NO TESTS RUN";
     }
 }
@@ -350,7 +348,7 @@ void track_loop_card_init(TrackLoopCard *card) {
     test_card_init(&card->base, "READ TRACK DATA LOOP",
                    "J/K TRACK  ENTER/X EXIT", 5U);
     track_loop_card_set_last_status(card, "OK");
-    track_loop_card_set_info_status(card, s_ready);
+    track_loop_card_set_info_status(card, S_READY);
 }
 
 void track_loop_card_set_track(TrackLoopCard *card, unsigned char track) {
@@ -375,7 +373,7 @@ void track_loop_card_set_last_status(TrackLoopCard *card,
 void track_loop_card_set_info_status(TrackLoopCard *card,
                                      const char *status_value) {
     test_card_set_labeled_value(&card->base, 4U, LABEL_INFO,
-                                status_value, s_ready);
+                                status_value, S_READY);
 }
 
 void track_loop_card_set_active(TrackLoopCard *card) {
@@ -402,7 +400,7 @@ void track_loop_card_set_read_id_fail(TrackLoopCard *card, unsigned char track,
                                       const char *reason) {
     snprintf(card->base.text[3], TEST_CARD_LINE_LEN, "%sRID FAIL T=%u",
              LABEL_LAST, (unsigned int) track);
-    track_loop_card_set_info_status(card, reason ? reason : s_unknown);
+    track_loop_card_set_info_status(card, reason ? reason : S_UNKNOWN);
 }
 
 void track_loop_card_set_bad_sector_size(TrackLoopCard *card,
@@ -416,11 +414,11 @@ void track_loop_card_set_read_fail(TrackLoopCard *card, unsigned char track,
                                    const char *reason) {
     snprintf(card->base.text[3], TEST_CARD_LINE_LEN, "%sREAD FAIL T=%u",
              LABEL_LAST, (unsigned int) track);
-    track_loop_card_set_info_status(card, reason ? reason : s_unknown);
+    track_loop_card_set_info_status(card, reason ? reason : S_UNKNOWN);
 }
 
 void track_loop_card_set_stopped(TrackLoopCard *card) {
-    track_loop_card_set_last_status(card, s_stopped);
+    track_loop_card_set_last_status(card, S_STOPPED);
     track_loop_card_set_info_status(card, "USER EXIT");
 }
 
@@ -435,7 +433,7 @@ void track_loop_card_render(const TrackLoopCard *card, TestCardResult result) {
 void rpm_loop_card_init(RpmLoopCard *card) {
     test_card_init(&card->base, "DISK RPM CHECK LOOP", "ENTER/X EXIT", 5U);
     rpm_loop_card_set_last_status(card, "WAITING");
-    rpm_loop_card_set_info_status(card, s_ready);
+    rpm_loop_card_set_info_status(card, S_READY);
 }
 
 void rpm_loop_card_set_rpm(RpmLoopCard *card, unsigned int rpm,
@@ -466,7 +464,7 @@ void rpm_loop_card_set_last_status(RpmLoopCard *card,
 void rpm_loop_card_set_info_status(RpmLoopCard *card,
                                    const char *status_value) {
     test_card_set_labeled_value(&card->base, 4U, LABEL_INFO,
-                                status_value, s_ready);
+                                status_value, S_READY);
 }
 
 void rpm_loop_card_set_drive_not_ready(RpmLoopCard *card) {
@@ -481,7 +479,7 @@ void rpm_loop_card_set_seek_fail(RpmLoopCard *card) {
 
 void rpm_loop_card_set_id_fail(RpmLoopCard *card, const char *reason) {
     rpm_loop_card_set_last_status(card, "ID FAIL");
-    rpm_loop_card_set_info_status(card, reason ? reason : s_unknown);
+    rpm_loop_card_set_info_status(card, reason ? reason : S_UNKNOWN);
 }
 
 void rpm_loop_card_set_no_measurement(RpmLoopCard *card,
@@ -501,7 +499,7 @@ void rpm_loop_card_set_sample_ready(RpmLoopCard *card) {
 }
 
 void rpm_loop_card_set_stopped(RpmLoopCard *card) {
-    rpm_loop_card_set_last_status(card, s_stopped);
+    rpm_loop_card_set_last_status(card, S_STOPPED);
     rpm_loop_card_set_info_status(card, "USER EXIT");
 }
 
@@ -560,7 +558,7 @@ void motor_drive_card_render(const MotorDriveCard *card, TestCardResult result) 
 void read_id_probe_card_init(ReadIdProbeCard *card, const char *controls) {
     test_card_init(&card->base, "DRIVE READ ID PROBE", controls, 6U);
     read_id_probe_card_set_unknown(card);
-    read_id_probe_card_set_id_status(card, s_unknown);
+    read_id_probe_card_set_id_status(card, S_UNKNOWN);
 }
 
 void read_id_probe_card_set_unknown(ReadIdProbeCard *card) {
@@ -571,7 +569,7 @@ void read_id_probe_card_set_unknown(ReadIdProbeCard *card) {
 void read_id_probe_card_set_id_status(ReadIdProbeCard *card,
                                       const char *status_value) {
     test_card_set_labeled_value(&card->base, 5U, LABEL_ID,
-                                status_value, s_unknown);
+                                status_value, S_UNKNOWN);
 }
 
 void read_id_probe_card_set_drive_status(ReadIdProbeCard *card,
@@ -599,7 +597,7 @@ void read_id_probe_card_set_id_chrn(ReadIdProbeCard *card, unsigned char c,
 void read_id_probe_card_set_id_failure(ReadIdProbeCard *card,
                                        const char *reason) {
     test_card_set_labeled_value(&card->base, 5U, LABEL_ID,
-                                reason, s_unknown);
+                                reason, S_UNKNOWN);
 }
 
 void read_id_probe_card_reset(ReadIdProbeCard *card) {
@@ -686,11 +684,11 @@ void read_id_card_init(ReadIdCard *card, const char *controls) {
 
 void read_id_card_set_waiting(ReadIdCard *card) {
     test_card_set_labeled_value(&card->base, 0U, LABEL_MEDIA,
-                                s_readable_disk, s_readable_disk);
+                                S_READABLE_DISK, S_READABLE_DISK);
     test_card_set_labeled_value(&card->base, 1U, LABEL_STS,
                                 "--/--/--", "--/--/--");
     test_card_set_labeled_value(&card->base, 2U, LABEL_CHRN,
-                                s_invalid, s_invalid);
+                                S_INVALID, S_INVALID);
     test_card_set_labeled_value(&card->base, 3U, LABEL_DETAIL,
                                 "WAITING", "WAITING");
 }
@@ -702,11 +700,11 @@ void read_id_card_set_reading(ReadIdCard *card) {
 
 void read_id_card_set_drive_not_ready(ReadIdCard *card, unsigned char st3) {
     test_card_set_labeled_value(&card->base, 0U, LABEL_MEDIA,
-                                s_readable_disk, s_readable_disk);
+                                S_READABLE_DISK, S_READABLE_DISK);
     snprintf(card->base.text[1], TEST_CARD_LINE_LEN, "%sST3=%02X",
              LABEL_READY, st3);
     test_card_set_labeled_value(&card->base, 2U, LABEL_CHRN,
-                                s_invalid, s_invalid);
+                                S_INVALID, S_INVALID);
     test_card_set_labeled_value(&card->base, 3U, LABEL_DETAIL,
                                 "DRIVE NOT READY", "DRIVE NOT READY");
 }
@@ -714,7 +712,7 @@ void read_id_card_set_drive_not_ready(ReadIdCard *card, unsigned char st3) {
 void read_id_card_set_status(ReadIdCard *card, unsigned char st0,
                              unsigned char st1, unsigned char st2) {
     test_card_set_labeled_value(&card->base, 0U, LABEL_MEDIA,
-                                s_readable_disk, s_readable_disk);
+                                S_READABLE_DISK, S_READABLE_DISK);
     snprintf(card->base.text[1], TEST_CARD_LINE_LEN, "%s%02X/%02X/%02X",
              LABEL_STS, st0, st1, st2);
 }
@@ -730,7 +728,7 @@ void read_id_card_set_chrn_valid(ReadIdCard *card, unsigned char c,
 void read_id_card_set_chrn_status(ReadIdCard *card,
                                   const char *status_value) {
     test_card_set_labeled_value(&card->base, 2U, LABEL_CHRN,
-                                status_value, s_invalid);
+                                status_value, S_INVALID);
 }
 
 void read_id_card_set_detail_status(ReadIdCard *card,
@@ -741,7 +739,7 @@ void read_id_card_set_detail_status(ReadIdCard *card,
 
 void read_id_card_set_detail_failure(ReadIdCard *card, const char *reason) {
     test_card_set_labeled_value(&card->base, 3U, LABEL_DETAIL,
-                                reason, s_unknown);
+                                reason, S_UNKNOWN);
 }
 
 void read_id_card_reset(ReadIdCard *card) {
