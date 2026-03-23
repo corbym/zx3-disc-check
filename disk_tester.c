@@ -233,12 +233,10 @@ static void wait_after_test_run(unsigned char manual_run) {
 
 
 static const KeyMap keymap[] = {
-    {0xF7FE, 0x01, '1'}, {0xF7FE, 0x02, '2'}, {0xF7FE, 0x04, '3'},
-    {0xF7FE, 0x08, '4'}, {0xF7FE, 0x10, '5'}, {0xEFFE, 0x10, '6'},
-    {0xEFFE, 0x08, '7'}, {0xFDFE, 0x01, 'A'}, {0x7FFE, 0x08, 'C'},
-    {0xFDFE, 0x04, 'D'}, {0xFBFE, 0x04, 'E'}, {0xFEFE, 0x04, 'X'},
-    {0xBFFE, 0x08, 'J'}, {0xBFFE, 0x04, 'K'}, {0xEFFE, 0x01, '0'},
-    {0xFBFE, 0x01, 'Q'}, {0xFBFE, 0x08, 'R'}, {0x7FFE, 0x01, ' '},
+    {0xFEFE, 0x04, 'X'},
+    {0xBFFE, 0x08, 'J'},
+    {0xBFFE, 0x04, 'K'},
+    {0xFBFE, 0x01, 'Q'},
     {0xBFFE, 0x01, '\n'}
 };
 
@@ -246,22 +244,10 @@ enum { RUNTIME_KEYMAP_COUNT = sizeof(keymap) / sizeof(keymap[0]) };
 
 static unsigned char runtime_key_latched[RUNTIME_KEYMAP_COUNT];
 static unsigned char runtime_break_latched;
-static int runtime_pending_key = -1;
-
-static unsigned char x_pressed(void) {
-    return (unsigned char) ((inportb(0xFEFE) & 0x04) == 0);
-}
-
-static unsigned char j_pressed(void) {
-    return (unsigned char) ((inportb(0xBFFE) & 0x08) == 0);
-}
-
-static unsigned char k_pressed(void) {
-    return (unsigned char) ((inportb(0xBFFE) & 0x04) == 0);
-}
+static unsigned char runtime_pending_key;
 
 
-static int scan_runtime_key_event(void) {
+static unsigned char scan_runtime_key_event(void) {
     if (break_pressed()) {
         if (!runtime_break_latched) {
             runtime_break_latched = 1;
@@ -285,18 +271,18 @@ static int scan_runtime_key_event(void) {
         runtime_key_latched[i] = 0;
     }
 
-    return -1;
+    return 0;
 }
 
 static void pump_runtime_key_latch(void) {
-    if (runtime_pending_key == -1) {
+    if (runtime_pending_key == 0U) {
         runtime_pending_key = scan_runtime_key_event();
     }
 }
 
 static int pop_runtime_pending_key(void) {
-    int key = runtime_pending_key;
-    runtime_pending_key = -1;
+    unsigned char key = runtime_pending_key;
+    runtime_pending_key = 0;
     return key;
 }
 
@@ -316,7 +302,7 @@ static void delay_ms_pump_keys(unsigned int ms) {
 static int read_key_blocking(void) {
     for (;;) {
         pump_runtime_key_latch();
-        if (runtime_pending_key != -1) {
+        if (runtime_pending_key != 0U) {
             return pop_runtime_pending_key();
         }
     }
@@ -324,11 +310,13 @@ static int read_key_blocking(void) {
 
 static int read_enter_blocking(void) {
     for (;;) {
+        int key;
+
         pump_runtime_key_latch();
-        if (runtime_pending_key == -1) {
+        if (runtime_pending_key == 0U) {
             continue;
         }
-        int key = pop_runtime_pending_key();
+        key = pop_runtime_pending_key();
         if (key == 27 || key == '\n' || toupper((unsigned char)key) == 'X') {
             return key;
         }
@@ -346,8 +334,8 @@ static unsigned char loop_exit_requested(void) {
         }
         return 1;
     }
-    if (x_pressed()) {
-        while (x_pressed()) {
+    if ((inportb(0xFEFE) & 0x04) == 0) {
+        while ((inportb(0xFEFE) & 0x04) == 0) {
         }
         return 1;
     }
@@ -357,6 +345,43 @@ static unsigned char loop_exit_requested(void) {
 static unsigned char rpm_exit_armed(unsigned short loop_start_tick) {
     return (unsigned char) ((unsigned short) (frame_ticks() - loop_start_tick) >=
                             (unsigned short) (RPM_EXIT_ARM_DELAY_MS / 20U));
+}
+
+static unsigned char track_loop_exit_pending(void) {
+    pump_runtime_key_latch();
+    return (unsigned char) (runtime_pending_key == 27 || runtime_pending_key == 'X');
+}
+
+static unsigned char track_loop_consume_action(unsigned char *track,
+                                               unsigned char *seek_required,
+                                               unsigned char *ui_redraw_required) {
+    pump_runtime_key_latch();
+
+    switch (runtime_pending_key) {
+        case 'J':
+            runtime_pending_key = 0;
+            if (*track > 0U) {
+                (*track)--;
+                *seek_required = 1;
+                *ui_redraw_required = 1;
+            }
+            return 0;
+        case 'K':
+            runtime_pending_key = 0;
+            if (*track < 79U) {
+                (*track)++;
+                *seek_required = 1;
+                *ui_redraw_required = 1;
+            }
+            return 0;
+        case 'X':
+        case 27:
+            runtime_pending_key = 0;
+            return 1;
+        default:
+            runtime_pending_key = 0;
+            return 0;
+    }
 }
 
 
@@ -936,7 +961,6 @@ static void test_read_track_data_loop(void) {
     unsigned char current_track = 0;
     unsigned char seek_required = 1;
     unsigned char recal_required = 1;
-    unsigned char track_key_latch = 0;
     unsigned char drive_status_st3 = 0;
     unsigned int pass_count = 0;
     unsigned int fail_count = 0;
@@ -947,29 +971,27 @@ static void test_read_track_data_loop(void) {
     seek_result.pcn = 0;
 
     last_test_failed = 0;
+    memset(runtime_key_latched, 0, sizeof(runtime_key_latched));
+    runtime_break_latched = 0;
+    runtime_pending_key = 0;
+    disk_operations_set_idle_pump(pump_runtime_key_latch);
 
     plus3_motor_on();
 
-    while (!loop_exit_requested()) {
+    for (;;) {
         unsigned char exit_now = 0;
+        unsigned char seek_fail_st0 = 0;
 
 #if HEADLESS_ROM_FONT
         if (pass_count + fail_count >= 3U) break;
 #endif
-        if (!track_key_latch && j_pressed()) {
-            if (current_track > 0) current_track--;
-            seek_required = 1;
-            track_key_latch = 1;
-            ui_redraw_required = 1;
+        if (track_loop_exit_pending()) {
+            runtime_pending_key = 0;
+            break;
         }
-        else if (!track_key_latch && k_pressed()) {
-            if (current_track < 79) current_track++;
-            seek_required = 1;
-            track_key_latch = 1;
-            ui_redraw_required = 1;
-        }
-        else if (!j_pressed() && !k_pressed()) {
-            track_key_latch = 0;
+        if (track_loop_consume_action(&current_track, &seek_required,
+                                      &ui_redraw_required)) {
+            break;
         }
 
         if (ui_redraw_required) {
@@ -992,24 +1014,15 @@ static void test_read_track_data_loop(void) {
             if (recal_required) {
                 FdcSeekResult recal_result;
                 if (!recalibrate_track0_strict(&recal_result)) {
-                    fail_count++;
-                    render_track_loop_seek_fail(current_track, pass_count,
-                                                fail_count, recal_result.st0);
-                    ui_redraw_required = 0;
-                    delay_ms(20);
-                    continue;
+                    seek_fail_st0 = recal_result.st0;
+                    goto track_seek_fail;
                 }
                 recal_required = 0;
             }
             if (!cmd_seek(FDC_DRIVE, 0, current_track) ||
                 !wait_seek_complete(FDC_DRIVE, &seek_result)) {
-                fail_count++;
-                render_track_loop_seek_fail(current_track, pass_count,
-                                            fail_count, seek_result.st0);
-                seek_required = 1;
-                ui_redraw_required = 0;
-                delay_ms(20);
-                continue;
+                seek_fail_st0 = seek_result.st0;
+                goto track_seek_fail;
             }
             seek_required = 0;
             ui_redraw_required = 1;
@@ -1021,10 +1034,7 @@ static void test_read_track_data_loop(void) {
                 current_track, pass_count, fail_count,
                 read_id_failure_reason(read_id_result.status.st1,
                                        read_id_result.status.st2));
-            seek_required = 1;
-            ui_redraw_required = 0;
-            delay_ms(20);
-            continue;
+            goto track_retry_fail;
         }
 
         sector_data_len = sector_size_from_n(read_id_result.chrn.n);
@@ -1032,10 +1042,7 @@ static void test_read_track_data_loop(void) {
             fail_count++;
             render_track_loop_bad_sector_size(current_track, pass_count,
                                               fail_count, read_id_result.chrn.n);
-            seek_required = 1;
-            ui_redraw_required = 0;
-            delay_ms(20);
-            continue;
+            goto track_retry_fail;
         }
 
         if (!cmd_read_data(FDC_DRIVE, read_id_result.chrn.h,
@@ -1048,26 +1055,36 @@ static void test_read_track_data_loop(void) {
                 current_track, pass_count, fail_count,
                 read_id_failure_reason(read_data_result.status.st1,
                                        read_data_result.status.st2));
-            seek_required = 1;
-            ui_redraw_required = 0;
-            delay_ms(20);
-            continue;
+            goto track_retry_fail;
         }
 
         pass_count++;
 
         /* Short pacing gives keyboard scans time without stalling diagnostics. */
         for (unsigned char pause_step = 0; pause_step < READ_LOOP_PAUSE_STEPS; pause_step++) {
-            if (loop_exit_requested()) {
+            if (track_loop_exit_pending()) {
+                runtime_pending_key = 0;
                 exit_now = 1;
                 break;
             }
             delay_ms(READ_LOOP_PAUSE_MS);
         }
         if (exit_now) break;
+        continue;
+
+track_seek_fail:
+        fail_count++;
+        render_track_loop_seek_fail(current_track, pass_count,
+                                    fail_count, seek_fail_st0);
+track_retry_fail:
+        seek_required = 1;
+        ui_redraw_required = 0;
+        delay_ms(20);
+        continue;
     }
 
     plus3_motor_off();
+    disk_operations_set_idle_pump(0);
     render_track_loop_stopped(current_track, pass_count, fail_count);
     last_test_failed = (unsigned char) (fail_count > 0);
 }
@@ -1112,20 +1129,14 @@ static void test_rpm_checker(void) {
         /* Run RECAL once; if it fails, retry next loop until one success. */
         if (recal_pending) {
             if (!recalibrate_track0_strict(&seek_result)) {
-                fail_count++;
-                render_rpm_loop_seek_fail(rpm, pass_count, fail_count);
-                delay_ms(RPM_FAIL_DELAY_MS);
-                continue;
+                goto seek_fail;
             }
             recal_pending = 0;
         }
 
         if (!cmd_seek(FDC_DRIVE, 0, 0) ||
             !wait_seek_complete(FDC_DRIVE, &seek_result)) {
-            fail_count++;
-            render_rpm_loop_seek_fail(rpm, pass_count, fail_count);
-            delay_ms(RPM_FAIL_DELAY_MS);
-            continue;
+            goto seek_fail;
         }
 
         if (!cmd_read_id(FDC_DRIVE, 0, &rid_result)) {
@@ -1189,6 +1200,13 @@ static void test_rpm_checker(void) {
         pass_count++;
         render_rpm_loop_sample(rpm, pass_count, fail_count);
         delay_ms(RPM_LOOP_DELAY_MS);
+        continue;
+
+seek_fail:
+        fail_count++;
+        render_rpm_loop_seek_fail(rpm, pass_count, fail_count);
+        delay_ms(RPM_FAIL_DELAY_MS);
+        continue;
     }
 
     plus3_motor_off();

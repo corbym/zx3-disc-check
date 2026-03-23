@@ -59,6 +59,7 @@ extern void set_motor_off(void);
 #define FDC_RQM_TIMEOUT       20000U
 /* Command/result bytes need a small pacing gap; execution-phase data do not. */
 #define FDC_CMD_BYTE_GAP_UNITS 4U
+#define FDC_IDLE_PUMP_POLL_MASK 0x00FFU
 
 #define SEEK_PREP_DELAY_MS        2U
 #define SEEK_BUSY_TIMEOUT_MS    900U
@@ -78,6 +79,7 @@ extern void set_motor_off(void);
 /* -------------------------------------------------------------------------- */
 
 static volatile unsigned int delay_spin_sink;
+static void (*idle_pump_callback)(void);
 
 /* Debug counters — inspected by a debugger, never printf'd. */
 static unsigned int dbg_seek_wait_loops;
@@ -92,6 +94,10 @@ typedef struct {
 /* -------------------------------------------------------------------------- */
 /* Timing                                                                     */
 /* -------------------------------------------------------------------------- */
+
+void disk_operations_set_idle_pump(void (*pump)(void)) {
+    idle_pump_callback = pump;
+}
 
 /*
  * delay_ms()
@@ -109,6 +115,7 @@ typedef struct {
  */
 void delay_ms(unsigned int millis) {
     for (unsigned int outer = 0; outer < millis; outer++) {
+        if (idle_pump_callback) idle_pump_callback();
         for (unsigned char inner = 0; inner < LOOPS_PER_MS; inner++) {
             delay_spin_sink++;
         }
@@ -163,6 +170,23 @@ static unsigned char fdc_wait_rqm(const unsigned char want_dio,
     return 0;
 }
 
+/* Like fdc_wait_rqm(), but periodically pumps the optional idle callback while
+ * waiting. Used only for command/result phases; execution-phase data reads must
+ * stay as tight as possible to avoid overruns. */
+static unsigned char fdc_wait_rqm_idle(const unsigned char want_dio,
+                                       unsigned int timeout) {
+    while (timeout--) {
+        unsigned char main_status_register = inportb(FDC_MSR_PORT);
+        if ((main_status_register & MSR_RQM) &&
+            (((main_status_register & MSR_DIO) != 0) == (want_dio != 0)))
+            return 1;
+        if (idle_pump_callback && (timeout & FDC_IDLE_PUMP_POLL_MASK) == 0U) {
+            idle_pump_callback();
+        }
+    }
+    return 0;
+}
+
 /*
  * fdc_write()
  *
@@ -174,7 +198,7 @@ static unsigned char fdc_wait_rqm(const unsigned char want_dio,
  * Returns 1 on success, 0 if the RQM wait times out.
  */
 static unsigned char fdc_write(unsigned char b) {
-    if (!fdc_wait_rqm(0, FDC_RQM_TIMEOUT)) return 0;
+    if (!fdc_wait_rqm_idle(0, FDC_RQM_TIMEOUT)) return 0;
     outportb(FDC_DATA_PORT, b);
     delay_us_approx(FDC_CMD_BYTE_GAP_UNITS);
     return 1;
@@ -194,7 +218,7 @@ static unsigned char fdc_write(unsigned char b) {
  * Returns 1 on success, 0 if the RQM wait times out.
  */
 static unsigned char fdc_read(unsigned char *out) {
-    if (!fdc_wait_rqm(1, FDC_RQM_TIMEOUT)) return 0;
+    if (!fdc_wait_rqm_idle(1, FDC_RQM_TIMEOUT)) return 0;
     *out = inportb(FDC_DATA_PORT);
     delay_us_approx(FDC_CMD_BYTE_GAP_UNITS);
     return 1;

@@ -10,6 +10,11 @@
 /* Busy-wait delay; safe to call from test logic. */
 void delay_ms(unsigned int millis);
 
+/* Optional callback pumped during coarse idle waits (delay_ms and command/result
+ * phase FDC waits). Use NULL to disable. Never called during execution-phase
+ * READ DATA byte transfers. */
+void disk_operations_set_idle_pump(void (*pump)(void));
+
 /* Read the ZX Spectrum 50 Hz frame counter (20 ms per tick). */
 unsigned short frame_ticks(void);
 
