@@ -21,12 +21,14 @@ fi
 # Keep only printf handlers used by this project (%u, %X, %s) plus flag parsing
 # for width/zero-pad forms like %3u and %02X.
 PRINTF_CFLAGS="-pragma-define:CLIB_OPT_PRINTF=0x4000A20A -pragma-define:CLIB_OPT_PRINTF_2=0"
+# +3 build is RAM-tight; reclaim default stdio heap reserve.
+HEAP_CFLAGS="-pragma-define:CLIB_STDIO_HEAP_SIZE=0"
 OPT_CFLAGS="-SO3"
 
 # TAP build: loaded via DIVIDE on real +3
-zcc +zx -vn -clib=new ${OPT_CFLAGS} ${DEBUG_CFLAGS} ${UI_CFLAGS} ${HEADLESS_FONT_CFLAGS} ${PRINTF_CFLAGS} -create-app disk_tester.c disk_operations.c menu_system.c ui.c test_cards.c intstate.asm -o ./out/disk_tester -m
+zcc +zx -vn -clib=new ${OPT_CFLAGS} ${DEBUG_CFLAGS} ${UI_CFLAGS} ${HEADLESS_FONT_CFLAGS} ${PRINTF_CFLAGS} ${HEAP_CFLAGS} -create-app disk_tester.c disk_operations.c menu_system.c ui.c test_cards.c intstate.asm -o ./out/disk_tester -m
 
 # DSK build: bootable +3 disk image
-zcc +zx -vn -clib=new ${OPT_CFLAGS} ${DEBUG_CFLAGS} ${UI_CFLAGS} ${HEADLESS_FONT_CFLAGS} ${PRINTF_CFLAGS} -subtype=plus3 -create-app disk_tester.c disk_operations.c menu_system.c ui.c test_cards.c intstate.asm -o ./out/disk_tester_plus3 -m
+zcc +zx -vn -clib=new ${OPT_CFLAGS} ${DEBUG_CFLAGS} ${UI_CFLAGS} ${HEADLESS_FONT_CFLAGS} ${PRINTF_CFLAGS} ${HEAP_CFLAGS} -subtype=plus3 -create-app disk_tester.c disk_operations.c menu_system.c ui.c test_cards.c intstate.asm -o ./out/disk_tester_plus3 -m
 
 z88dk-dis out/disk_tester_CODE.bin > out/disk_tester.asm || true

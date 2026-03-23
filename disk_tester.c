@@ -43,8 +43,8 @@ extern unsigned char inportb(unsigned short port);
 #define IOCTL_OTERM_PAUSE 0xC042
 #endif
 
-#define READ_LOOP_PAUSE_STEPS 4U
-#define READ_LOOP_PAUSE_MS 6U
+#define READ_LOOP_PAUSE_STEPS 2U
+#define READ_LOOP_PAUSE_MS    25U
 #define TEST_CARD_STATE_DELAY_MS 90U
 #define RUN_ALL_READY_DELAY_MS 150U
 #define RUN_ALL_RUNNING_DELAY_MS 120U
@@ -243,19 +243,12 @@ static const KeyMap keymap[] = {
 enum { RUNTIME_KEYMAP_COUNT = sizeof(keymap) / sizeof(keymap[0]) };
 
 static unsigned char runtime_key_latched[RUNTIME_KEYMAP_COUNT];
-static unsigned char runtime_break_latched;
 static unsigned char runtime_pending_key;
 
 
 static unsigned char scan_runtime_key_event(void) {
     if (break_pressed()) {
-        if (!runtime_break_latched) {
-            runtime_break_latched = 1;
-            return 27;
-        }
-    }
-    else {
-        runtime_break_latched = 0;
+        return 27;
     }
 
     for (unsigned char i = 0; i < RUNTIME_KEYMAP_COUNT; i++) {
@@ -286,19 +279,6 @@ static int pop_runtime_pending_key(void) {
     return key;
 }
 
-static void delay_ms_pump_keys(unsigned int ms) {
-    const unsigned int slice_ms = 50U;
-    while (ms >= slice_ms) {
-        pump_runtime_key_latch();
-        delay_ms(slice_ms);
-        ms = (unsigned int) (ms - slice_ms);
-    }
-    if (ms > 0U) {
-        pump_runtime_key_latch();
-        delay_ms(ms);
-    }
-}
-
 static int read_key_blocking(void) {
     for (;;) {
         pump_runtime_key_latch();
@@ -324,32 +304,14 @@ static int read_enter_blocking(void) {
 }
 
 static unsigned char loop_exit_requested(void) {
-    if (break_pressed()) {
-        while (break_pressed()) {
-        }
-        return 1;
-    }
-    if ((inportb(0xBFFE) & 0x01) == 0) {
-        while ((inportb(0xBFFE) & 0x01) == 0) {
-        }
-        return 1;
-    }
-    if ((inportb(0xFEFE) & 0x04) == 0) {
-        while ((inportb(0xFEFE) & 0x04) == 0) {
-        }
-        return 1;
-    }
-    return 0;
+    return (unsigned char)(break_pressed() ||
+                           ((inportb(0xBFFE) & 0x01) == 0) ||
+                           ((inportb(0xFEFE) & 0x04) == 0));
 }
 
 static unsigned char rpm_exit_armed(unsigned short loop_start_tick) {
     return (unsigned char) ((unsigned short) (frame_ticks() - loop_start_tick) >=
                             (unsigned short) (RPM_EXIT_ARM_DELAY_MS / 20U));
-}
-
-static unsigned char track_loop_exit_pending(void) {
-    pump_runtime_key_latch();
-    return (unsigned char) (runtime_pending_key == 27 || runtime_pending_key == 'X');
 }
 
 static unsigned char track_loop_consume_action(unsigned char *track,
@@ -411,7 +373,7 @@ static const char *single_shot_test_controls(int interactive) {
 /* Tests                                                                      */
 /* -------------------------------------------------------------------------- */
 
-static void test_motor_and_drive_status(const char interactive) {
+static void test_motor_and_drive_status(int interactive) {
     unsigned char status_3 = 0;
     unsigned char have_st3 = 0;
     unsigned char show_live_card = show_selected_test_cards();
@@ -972,23 +934,17 @@ static void test_read_track_data_loop(void) {
 
     last_test_failed = 0;
     memset(runtime_key_latched, 0, sizeof(runtime_key_latched));
-    runtime_break_latched = 0;
     runtime_pending_key = 0;
     disk_operations_set_idle_pump(pump_runtime_key_latch);
 
     plus3_motor_on();
 
     for (;;) {
-        unsigned char exit_now = 0;
         unsigned char seek_fail_st0 = 0;
 
 #if HEADLESS_ROM_FONT
         if (pass_count + fail_count >= 3U) break;
 #endif
-        if (track_loop_exit_pending()) {
-            runtime_pending_key = 0;
-            break;
-        }
         if (track_loop_consume_action(&current_track, &seek_required,
                                       &ui_redraw_required)) {
             break;
@@ -1026,6 +982,8 @@ static void test_read_track_data_loop(void) {
             }
             seek_required = 0;
             ui_redraw_required = 1;
+            /* Moved to a different track — old hex dump data is stale. */
+            ui_reset_hex_dump_panel();
         }
 
         if (!cmd_read_id(FDC_DRIVE, 0, &read_id_result)) {
@@ -1060,16 +1018,19 @@ static void test_read_track_data_loop(void) {
 
         pass_count++;
 
-        /* Short pacing gives keyboard scans time without stalling diagnostics. */
-        for (unsigned char pause_step = 0; pause_step < READ_LOOP_PAUSE_STEPS; pause_step++) {
-            if (track_loop_exit_pending()) {
-                runtime_pending_key = 0;
-                exit_now = 1;
-                break;
-            }
-            delay_ms(READ_LOOP_PAUSE_MS);
-        }
-        if (exit_now) break;
+        /*
+         * Update the card with the new pass count, then blit the sector data
+         * below the card as a hex+ASCII dump.  The dump is skipped by the
+         * renderer if the sector content hasn't changed (checksum dirty check).
+         * ui_redraw_required is cleared here since we just rendered the card.
+         */
+        render_track_loop_active(current_track, pass_count, fail_count);
+        ui_render_hex_dump_panel(sector_data, sector_data_len);
+        ui_redraw_required = 0;
+
+        /* Short pause: track_loop_consume_action at the next iteration
+         * will catch any pending J/K/X key after the delay. */
+        delay_ms((unsigned int)(READ_LOOP_PAUSE_STEPS * READ_LOOP_PAUSE_MS));
         continue;
 
 track_seek_fail:
@@ -1238,15 +1199,15 @@ static void run_all_tests(unsigned char human_mode) {
 
     set_report_status(REPORT_STATUS_READY);
     ui_render_report_card();
-    if (human_mode) delay_ms_pump_keys(RUN_ALL_READY_DELAY_EFFECTIVE_MS);
+    if (human_mode) delay_ms(RUN_ALL_READY_DELAY_EFFECTIVE_MS);
 
     for (unsigned char i = 0; i < RUN_ALL_TEST_COUNT; i++) {
         set_report_status(REPORT_STATUS_RUNNING);
-        if (human_mode) delay_ms_pump_keys(RUN_ALL_RUNNING_DELAY_EFFECTIVE_MS);
+        if (human_mode) delay_ms(RUN_ALL_RUNNING_DELAY_EFFECTIVE_MS);
         run_all_test_list[i](0);
         set_report_status(REPORT_STATUS_COMPLETE);
         ui_render_report_card();
-        if (human_mode) delay_ms_pump_keys(RUN_ALL_RESULT_DELAY_EFFECTIVE_MS);
+        if (human_mode) delay_ms(RUN_ALL_RESULT_DELAY_EFFECTIVE_MS);
     }
 
     last_test_failed = (unsigned char) (pass_count() < pass_count_ran());

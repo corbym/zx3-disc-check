@@ -282,6 +282,14 @@ static void ui_screen_write_row(unsigned char row, const char* text,
 static unsigned char ui_text_screen_active;
 static const char* ui_text_screen_title;
 static const char* ui_text_screen_controls;
+
+/*
+ * Hex dump panel dirty tracking.  Sentinel 0xFFFF forces the first render to
+ * always draw.  Both are reset whenever the screen clears so stale data from
+ * a previous card never persists on a new screen.
+ */
+static unsigned short ui_hex_dump_prev_dlen = 0xFFFFU;
+
 /*
  * Per-row dirty cache.  ui_row_tag combines a text checksum with the row
  * style; a full-row cache hit skips the pixel+attr write entirely.
@@ -307,6 +315,7 @@ void ui_reset_text_screen_cache(void) {
   ui_text_screen_active = 0;
   ui_text_screen_title = 0;
   ui_text_screen_controls = 0;
+  ui_hex_dump_prev_dlen = 0xFFFFU;
 }
 
 static unsigned char ui_line_value_col(const char* text) {
@@ -488,6 +497,7 @@ static void ui_begin_text_screen(const char* title, const char* controls) {
 
   memset(ui_row_tag, 0xFF, sizeof(ui_row_tag));
   memset(ui_row_value_col, 0xFF, sizeof(ui_row_value_col));
+  ui_hex_dump_prev_dlen = 0xFFFFU;
 
   ui_term_clear();
   ui_attr_fill(ZX_COLOUR_BLACK, ZX_COLOUR_WHITE, 0);
@@ -550,3 +560,67 @@ void ui_render_text_screen(const char* title, const char* controls,
     row++;
   }
 }
+
+/* ----------------------------------------------------------------------- */
+/* Hex dump panel (rows 10-23 below the card area)                          */
+/* ----------------------------------------------------------------------- */
+
+#define HEX_DUMP_HEADER_ROW    10U
+#define HEX_DUMP_DATA_ROWS     13U
+
+static const char s_hex_digits[17] = "0123456789ABCDEF";
+
+void ui_reset_hex_dump_panel(void) {
+  ui_hex_dump_prev_dlen = 0xFFFFU;
+}
+
+/*
+ * ui_render_hex_dump_panel — render sector data preview below the card area.
+ *
+ * Shows the first 8 bytes of sector data in hex format.
+ * Row 10: full-width header banner (white ink, blue paper).
+ * Row 11: first 8 bytes as hex pairs separated by spaces (blue on white).
+ * Rows 12-23: blank.
+ *
+ * Skips the redraw entirely when data length is unchanged.
+ */
+void ui_render_hex_dump_panel(const unsigned char *data, unsigned int data_len) {
+  char row_buf[33];
+  unsigned char r;
+  unsigned char show_len;
+  unsigned char col;
+
+  if (!data || data_len == 0U) {
+    ui_reset_hex_dump_panel();
+    for (r = HEX_DUMP_HEADER_ROW;
+         r <= (unsigned char)(HEX_DUMP_HEADER_ROW + HEX_DUMP_DATA_ROWS); r++) {
+      ui_screen_write_row(r, "", ZX_COLOUR_BLACK, ZX_COLOUR_WHITE, 0);
+    }
+    return;
+  }
+
+  if ((unsigned short)data_len == ui_hex_dump_prev_dlen) return;
+  ui_hex_dump_prev_dlen = (unsigned short)data_len;
+
+  ui_screen_write_row(HEX_DUMP_HEADER_ROW,
+                      " DATA PREVIEW (HEX BYTES)       ",
+                      ZX_COLOUR_WHITE, ZX_COLOUR_BLUE, 1);
+
+  show_len = (unsigned char)(data_len > 8U ? 8U : data_len);
+  col = 0U;
+  for (r = 0; r < show_len; r++) {
+    unsigned char bv = data[r];
+    row_buf[col++] = s_hex_digits[(bv >> 4) & 0x0FU];
+    row_buf[col++] = s_hex_digits[bv & 0x0FU];
+    if (r != (unsigned char)(show_len - 1U)) row_buf[col++] = ' ';
+  }
+  row_buf[col] = '\0';
+  ui_screen_write_row((unsigned char)(HEX_DUMP_HEADER_ROW + 1U), row_buf,
+                      ZX_COLOUR_BLUE, ZX_COLOUR_WHITE, 1);
+
+  for (r = 2U; r <= HEX_DUMP_DATA_ROWS; r++) {
+    ui_screen_write_row((unsigned char)(HEX_DUMP_HEADER_ROW + r), "",
+                        ZX_COLOUR_BLACK, ZX_COLOUR_WHITE, 0);
+  }
+}
+

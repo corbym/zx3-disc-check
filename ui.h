@@ -71,3 +71,20 @@ void ui_render_text_screen(const char* title, const char* controls,
                            const char* const* lines, unsigned char line_count,
                            const char* result_label, const char* result_value);
 
+/*
+ * Render a hex+ASCII dump panel in the lower screen area (rows 10-23).
+ * Row 10 is a full-width header banner; rows 11-23 show 13 rows of 8 bytes
+ * each in "XX XX ... AA" format (hex cols 0-22, ASCII cols 24-31).
+ *
+ * Redraws only when the data content has changed (checksum dirty tracking).
+ * Bypasses the text-screen row cache so it persists between card redraws.
+ */
+void ui_render_hex_dump_panel(const unsigned char *data, unsigned int data_len);
+
+/*
+ * Invalidate the hex dump panel checksum so the next call to
+ * ui_render_hex_dump_panel unconditionally redraws the panel.
+ * Call when switching tracks or leaving the track-loop screen.
+ */
+void ui_reset_hex_dump_panel(void);
+
