@@ -308,7 +308,7 @@ func TestScreenCaptureStages(t *testing.T) {
 	resetAndLoadTap(t, c)
 	waitForMenu(t, c, 30*time.Second)
 
-	captureChecked := func(filename string, requireNonBlank bool) {
+	captureChecked := func(filename string, requireNonBlank bool, maxDiff float64) {
 		t.Helper()
 		actual := filepath.Join(screenDir, filename)
 		approved := filepath.Join(approvedDir, filename)
@@ -318,6 +318,7 @@ func TestScreenCaptureStages(t *testing.T) {
 		}
 
 		const maxCaptureAttempts = 5
+		var lastActualBytes []byte
 		for attempt := 1; attempt <= maxCaptureAttempts; attempt++ {
 			if err := c.SaveScreen(actual); err != nil {
 				t.Fatalf("failed to save %s: %v", filename, err)
@@ -327,6 +328,7 @@ func TestScreenCaptureStages(t *testing.T) {
 			if readErr != nil {
 				t.Fatalf("failed reading actual screenshot %s: %v", actual, readErr)
 			}
+			lastActualBytes = actualBytes
 
 			if requireNonBlank && screenshotIsBlank(actualBytes) {
 				if attempt < maxCaptureAttempts {
@@ -343,8 +345,14 @@ func TestScreenCaptureStages(t *testing.T) {
 				return
 			}
 
-			if screenshotsEqual(actualBytes, approvedBytes) {
-				return
+			if maxDiff > 0 {
+				if screenshotDiffFraction(actualBytes, approvedBytes) <= maxDiff {
+					return
+				}
+			} else {
+				if screenshotsEqual(actualBytes, approvedBytes) {
+					return
+				}
 			}
 
 			if attempt < maxCaptureAttempts {
@@ -352,6 +360,11 @@ func TestScreenCaptureStages(t *testing.T) {
 			}
 		}
 
+		if maxDiff > 0 {
+			diff := screenshotDiffFraction(lastActualBytes, approvedBytes)
+			t.Fatalf("screenshot diff %.1f%% exceeds %.1f%% tolerance for %s after %d attempts\napproved: %s\nactual: %s",
+				diff*100, maxDiff*100, filename, maxCaptureAttempts, approved, actual)
+		}
 		t.Fatalf("screenshot mismatch for %s after %d attempts\napproved: %s\nactual: %s", filename, maxCaptureAttempts, approved, actual)
 	}
 
@@ -394,6 +407,7 @@ func TestScreenCaptureStages(t *testing.T) {
 		enterToMenu      bool
 		loadDSK          bool
 		captureAfterExit bool
+		maxDiffFraction  float64 // 0 = exact match; >0 = allow up to this fraction of pixels to differ
 	}
 
 	stages := []screenStage{
@@ -437,23 +451,23 @@ func TestScreenCaptureStages(t *testing.T) {
 			nonBlank:    true,
 		},
 		{
-			// Load DSK so the loop reads real sector data and the hex
-			// preview panel is populated. Send X quickly (several times) so
-			// we freeze the card before loop counters drift frame-to-frame.
-			name:             "read data loop",
-			captureFile:      "07_read_data_loop_hex_preview.bmp",
-			loadDSK:          true,
-			key:              'D',
-			waitFor:          []string{"READ TRACK DATA LOOP"},
-			waitTimeout:      30 * time.Second,
-			exitKeyRepeats:   3,
-			postExitDelay:    600 * time.Millisecond,
-			exitKey:          'X',
-			exitKey2:         13, // dismiss "press any key" after loop stops
-			exitWaitFor:      []string{"ZX +3 DISK TESTER", "ENTER: SELECT"},
-			exitTimeout:      20 * time.Second,
-			nonBlank:         true,
-			captureAfterExit: true,
+			// Load DSK so the loop reads real sector data and populates the
+			// hex preview panel. Capture while the loop is running (before
+			// pressing X), then exit cleanly. Fuzzy match (10%) because live
+			// counters and hex values change each frame.
+			name:            "read data loop",
+			captureFile:     "07_read_data_loop_hex_preview.bmp",
+			loadDSK:         true,
+			key:             'D',
+			waitFor:         []string{"READ TRACK DATA LOOP"},
+			waitTimeout:     30 * time.Second,
+			settleDelay:     1500 * time.Millisecond, // let hex panel populate
+			exitKey:         'X',
+			exitKey2:        13, // dismiss "press any key" after loop stops
+			exitWaitFor:     []string{"ZX +3 DISK TESTER", "ENTER: SELECT"},
+			exitTimeout:     20 * time.Second,
+			nonBlank:        true,
+			maxDiffFraction: 0.10,
 		},
 		{
 			// Reload DSK so this stage is independent of prior stage state.
@@ -500,7 +514,7 @@ func TestScreenCaptureStages(t *testing.T) {
 			if stage.settleDelay > 0 {
 				time.Sleep(stage.settleDelay)
 			}
-			captureChecked(stage.captureFile, stage.nonBlank)
+			captureChecked(stage.captureFile, stage.nonBlank, stage.maxDiffFraction)
 		}
 
 		if stage.captureAfterExit && stage.settleDelay > 0 {
@@ -524,7 +538,7 @@ func TestScreenCaptureStages(t *testing.T) {
 				if stage.postExitDelay > 0 {
 					time.Sleep(stage.postExitDelay)
 				}
-				captureChecked(stage.captureFile, stage.nonBlank)
+				captureChecked(stage.captureFile, stage.nonBlank, stage.maxDiffFraction)
 			}
 			if stage.exitKey2 != 0 {
 				time.Sleep(1 * time.Second)
@@ -562,6 +576,24 @@ func bmpPixelData(data []byte) ([]byte, bool) {
 		return nil, false
 	}
 	return data[offset:], true
+}
+
+// screenshotDiffFraction returns the fraction of bytes that differ between the
+// pixel regions of two BMP images. Returns 1.0 if the images cannot be
+// compared (e.g. different sizes or invalid format).
+func screenshotDiffFraction(actual, approved []byte) float64 {
+	a, aOK := bmpPixelData(actual)
+	b, bOK := bmpPixelData(approved)
+	if !aOK || !bOK || len(a) != len(b) || len(a) == 0 {
+		return 1.0
+	}
+	var diff int
+	for i := range a {
+		if a[i] != b[i] {
+			diff++
+		}
+	}
+	return float64(diff) / float64(len(a))
 }
 
 func screenshotIsBlank(data []byte) bool {
