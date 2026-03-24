@@ -570,7 +570,6 @@ void ui_render_text_screen(const char* title, const char* controls,
 #define HEX_DUMP_DATA_ROWS     13U
 
 static const char s_hex_digits[17] = "0123456789ABCDEF";
-
 void ui_reset_hex_dump_panel(void) {
   ui_hex_dump_prev_dlen = 0xFFFFU;
 }
@@ -578,18 +577,18 @@ void ui_reset_hex_dump_panel(void) {
 /*
  * ui_render_hex_dump_panel — render sector data preview below the card area.
  *
- * Shows the first 8 bytes of sector data in hex format.
+ * Shows the first 8 bytes as "XX XX XX XX XX XX XX XX AAAAAAAA" (32 chars):
+ * hex pairs (3 chars each = 24 cols) then ASCII (8 cols, '.' for non-printable).
+ *
  * Row 10: full-width header banner (white ink, blue paper).
- * Row 11: first 8 bytes as hex pairs separated by spaces (blue on white).
+ * Row 11: first 8 bytes in hex + ASCII (blue on white).
  * Rows 12-23: blank.
  *
  * Skips the redraw entirely when data length is unchanged.
  */
 void ui_render_hex_dump_panel(const unsigned char *data, unsigned int data_len) {
   char row_buf[33];
-  unsigned char r;
-  unsigned char show_len;
-  unsigned char col;
+  unsigned char r, col, bv, show_len;
 
   if (!data || data_len == 0U) {
     ui_reset_hex_dump_panel();
@@ -604,18 +603,20 @@ void ui_render_hex_dump_panel(const unsigned char *data, unsigned int data_len) 
   ui_hex_dump_prev_dlen = (unsigned short)data_len;
 
   ui_screen_write_row(HEX_DUMP_HEADER_ROW,
-                      " DATA PREVIEW (HEX BYTES)       ",
+                      " DATA PREVIEW (HEX + ASCII)     ",
                       ZX_COLOUR_WHITE, ZX_COLOUR_BLUE, 1);
 
+  /* "XX XX XX XX XX XX XX XX AAAAAAAA" — 24 hex cols + 8 ASCII cols = 32 */
   show_len = (unsigned char)(data_len > 8U ? 8U : data_len);
   col = 0U;
-  for (r = 0; r < show_len; r++) {
-    unsigned char bv = data[r];
+  for (r = 0U; r < show_len; r++) {
+    bv = data[r];
     row_buf[col++] = s_hex_digits[(bv >> 4) & 0x0FU];
     row_buf[col++] = s_hex_digits[bv & 0x0FU];
-    if (r != (unsigned char)(show_len - 1U)) row_buf[col++] = ' ';
+    row_buf[col++] = ' ';
+    row_buf[24U + r] = bv >= 0x20U ? (char)bv : '.';
   }
-  row_buf[col] = '\0';
+  row_buf[24U + show_len] = '\0';
   ui_screen_write_row((unsigned char)(HEX_DUMP_HEADER_ROW + 1U), row_buf,
                       ZX_COLOUR_BLUE, ZX_COLOUR_WHITE, 1);
 
