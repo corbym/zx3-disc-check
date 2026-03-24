@@ -53,6 +53,12 @@ A low-level ZX Spectrum +3 floppy drive test utility written in C and Z80 assemb
 ## Critical Memory Requirements
 Always pay attention to the memory footprint of the program. Unless you are adding functionality, you should not be increasing the memory usage. The program must fit within the ZX Spectrum +3's 128KB RAM, and ideally should leave some headroom for future tests or features. Use the `memory_budget_regression_test.go` test to track memory usage changes.
 
+When memory budget tests fail, treat `ZX3_STR_STORAGE` in `shared_strings.h` as a fallback strategy:
+- The hook is paging-ready, not a free optimization by itself. It only helps after wiring it to a real section/bank placement in the build/link configuration.
+- If enabled, move shared immutable strings out of the constrained default region and ensure call sites access them with the correct bank selected (or copy into always-mapped RAM before use).
+- Verify with a fresh `./build.sh`, then rerun `go test ./tests -run TestTapCodeSizeBudget` and `go test ./tests -run TestMapHeapStackHeadroom`.
+- If this strategy is used, document the chosen section/bank and paging assumptions in `shared_strings.h` and `build.sh` comments.
+
 ## Build & Test
 
 ### Build Variants

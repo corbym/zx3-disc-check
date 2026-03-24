@@ -378,19 +378,22 @@ func TestScreenCaptureStages(t *testing.T) {
 	}
 
 	type screenStage struct {
-		name        string
-		captureFile string
-		key         byte
-		exitKey     byte
-		exitKey2    byte
-		waitFor     []string
-		waitTimeout time.Duration
-		exitWaitFor []string
-		exitTimeout time.Duration
-		settleDelay time.Duration
-		nonBlank    bool
-		enterToMenu bool
-		loadDSK     bool
+		name             string
+		captureFile      string
+		key              byte
+		exitKey          byte
+		exitKey2         byte
+		waitFor          []string
+		waitTimeout      time.Duration
+		captureWaitFor   []string
+		captureTimeout   time.Duration
+		exitWaitFor      []string
+		exitTimeout      time.Duration
+		settleDelay      time.Duration
+		nonBlank         bool
+		enterToMenu      bool
+		loadDSK          bool
+		captureAfterExit bool
 	}
 
 	stages := []screenStage{
@@ -435,20 +438,23 @@ func TestScreenCaptureStages(t *testing.T) {
 		},
 		{
 			// Load DSK so the loop reads real sector data and the hex
-			// preview panel is populated.  The DSK stays loaded for the
-			// subsequent run-all stage.
-			name:        "read data loop",
-			captureFile: "07_read_data_loop_hex_preview.bmp",
-			loadDSK:     true,
-			key:         'D',
-			waitFor:     []string{"READ TRACK DATA LOOP", "DATA PREVIEW"},
-			waitTimeout: 30 * time.Second,
-			settleDelay: 3 * time.Second,
-			exitKey:     'X',
-			exitKey2:    13, // dismiss "press any key" after loop stops
-			exitWaitFor: []string{"ZX +3 DISK TESTER", "ENTER: SELECT"},
-			exitTimeout: 20 * time.Second,
-			nonBlank:    true,
+			// preview panel is populated. Capture after sending X so the
+			// frame is frozen before the strict bitmap comparison.
+			name:             "read data loop",
+			captureFile:      "07_read_data_loop_hex_preview.bmp",
+			loadDSK:          true,
+			key:              'D',
+			waitFor:          []string{"READ TRACK DATA LOOP", "DATA PREVIEW"},
+			waitTimeout:      30 * time.Second,
+			captureWaitFor:   []string{"READ TRACK DATA LOOP", "STOPPED", "USER EXIT"},
+			captureTimeout:   20 * time.Second,
+			settleDelay:      3 * time.Second,
+			exitKey:          'X',
+			exitKey2:         13, // dismiss "press any key" after loop stops
+			exitWaitFor:      []string{"ZX +3 DISK TESTER", "ENTER: SELECT"},
+			exitTimeout:      20 * time.Second,
+			nonBlank:         true,
+			captureAfterExit: true,
 		},
 		{
 			// DSK already loaded from the previous stage.
@@ -490,15 +496,28 @@ func TestScreenCaptureStages(t *testing.T) {
 			}
 		}
 
-		if stage.settleDelay > 0 {
-			time.Sleep(stage.settleDelay)
+		if !stage.captureAfterExit {
+			if stage.settleDelay > 0 {
+				time.Sleep(stage.settleDelay)
+			}
+			captureChecked(stage.captureFile, stage.nonBlank)
 		}
 
-		captureChecked(stage.captureFile, stage.nonBlank)
+		if stage.captureAfterExit && stage.settleDelay > 0 {
+			time.Sleep(stage.settleDelay)
+		}
 
 		if stage.exitKey != 0 {
 			if err := c.SendKey(stage.exitKey); err != nil {
 				t.Fatalf("failed to send exit key %q for %s: %v", stage.exitKey, stage.name, err)
+			}
+			if stage.captureAfterExit {
+				if len(stage.captureWaitFor) > 0 {
+					if _, err := c.WaitForOCR(stage.captureTimeout, stage.captureWaitFor...); err != nil {
+						t.Fatalf("timed out waiting for frozen capture state for %s: %v", stage.name, err)
+					}
+				}
+				captureChecked(stage.captureFile, stage.nonBlank)
 			}
 			if stage.exitKey2 != 0 {
 				time.Sleep(1 * time.Second)
