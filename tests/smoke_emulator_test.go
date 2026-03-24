@@ -377,42 +377,6 @@ func TestScreenCaptureStages(t *testing.T) {
 		t.Fatalf("timed out waiting for menu after Enter\nlast OCR:\n%s", lastOCR)
 	}
 
-	waitForFrozenCaptureState := func(timeout time.Duration, tokens []string) (bool, string) {
-		t.Helper()
-		if len(tokens) == 0 {
-			return true, ""
-		}
-
-		anchor := strings.ToUpper(tokens[0])
-		markers := make([]string, 0, len(tokens)-1)
-		for i := 1; i < len(tokens); i++ {
-			markers = append(markers, strings.ToUpper(tokens[i]))
-		}
-
-		deadline := time.Now().Add(timeout)
-		lastOCR := ""
-		for time.Now().Before(deadline) {
-			ocr, err := c.OCR()
-			if err == nil {
-				lastOCR = ocr
-				upper := strings.ToUpper(ocr)
-				if strings.Contains(upper, anchor) {
-					if len(markers) == 0 {
-						return true, lastOCR
-					}
-					for _, marker := range markers {
-						if strings.Contains(upper, marker) {
-							return true, lastOCR
-						}
-					}
-				}
-			}
-			time.Sleep(150 * time.Millisecond)
-		}
-
-		return false, lastOCR
-	}
-
 	type screenStage struct {
 		name             string
 		captureFile      string
@@ -421,11 +385,10 @@ func TestScreenCaptureStages(t *testing.T) {
 		exitKey2         byte
 		waitFor          []string
 		waitTimeout      time.Duration
-		captureWaitFor   []string
-		captureTimeout   time.Duration
 		exitWaitFor      []string
 		exitTimeout      time.Duration
 		settleDelay      time.Duration
+		postExitDelay    time.Duration
 		nonBlank         bool
 		enterToMenu      bool
 		loadDSK          bool
@@ -482,9 +445,8 @@ func TestScreenCaptureStages(t *testing.T) {
 			key:              'D',
 			waitFor:          []string{"READ TRACK DATA LOOP", "DATA PREVIEW"},
 			waitTimeout:      30 * time.Second,
-			captureWaitFor:   []string{"READ TRACK DATA LOOP", "STOPPED", "USER EXIT"},
-			captureTimeout:   20 * time.Second,
 			settleDelay:      3 * time.Second,
+			postExitDelay:    1500 * time.Millisecond,
 			exitKey:          'X',
 			exitKey2:         13, // dismiss "press any key" after loop stops
 			exitWaitFor:      []string{"ZX +3 DISK TESTER", "ENTER: SELECT"},
@@ -548,11 +510,8 @@ func TestScreenCaptureStages(t *testing.T) {
 				t.Fatalf("failed to send exit key %q for %s: %v", stage.exitKey, stage.name, err)
 			}
 			if stage.captureAfterExit {
-				if len(stage.captureWaitFor) > 0 {
-					ok, lastOCR := waitForFrozenCaptureState(stage.captureTimeout, stage.captureWaitFor)
-					if !ok {
-						t.Logf("warning: timed out waiting for frozen capture state for %s; capturing current frame\nlast OCR:\n%s", stage.name, lastOCR)
-					}
+				if stage.postExitDelay > 0 {
+					time.Sleep(stage.postExitDelay)
 				}
 				captureChecked(stage.captureFile, stage.nonBlank)
 			}
