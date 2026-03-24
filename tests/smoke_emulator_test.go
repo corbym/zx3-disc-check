@@ -382,6 +382,7 @@ func TestScreenCaptureStages(t *testing.T) {
 		captureFile      string
 		key              byte
 		exitKey          byte
+		exitKeyRepeats   int
 		exitKey2         byte
 		waitFor          []string
 		waitTimeout      time.Duration
@@ -437,16 +438,16 @@ func TestScreenCaptureStages(t *testing.T) {
 		},
 		{
 			// Load DSK so the loop reads real sector data and the hex
-			// preview panel is populated. Capture after sending X so the
-			// frame is frozen before the strict bitmap comparison.
+			// preview panel is populated. Send X quickly (several times) so
+			// we freeze the card before loop counters drift frame-to-frame.
 			name:             "read data loop",
 			captureFile:      "07_read_data_loop_hex_preview.bmp",
 			loadDSK:          true,
 			key:              'D',
-			waitFor:          []string{"READ TRACK DATA LOOP", "DATA PREVIEW"},
+			waitFor:          []string{"READ TRACK DATA LOOP"},
 			waitTimeout:      30 * time.Second,
-			settleDelay:      3 * time.Second,
-			postExitDelay:    1500 * time.Millisecond,
+			exitKeyRepeats:   3,
+			postExitDelay:    600 * time.Millisecond,
 			exitKey:          'X',
 			exitKey2:         13, // dismiss "press any key" after loop stops
 			exitWaitFor:      []string{"ZX +3 DISK TESTER", "ENTER: SELECT"},
@@ -455,9 +456,10 @@ func TestScreenCaptureStages(t *testing.T) {
 			captureAfterExit: true,
 		},
 		{
-			// DSK already loaded from the previous stage.
+			// Reload DSK so this stage is independent of prior stage state.
 			name:        "run-all complete",
 			captureFile: "06_run_all_complete.bmp",
+			loadDSK:     true,
 			key:         'A',
 			waitFor:     []string{"TEST REPORT CARD", "STATUS: COMPLETE"},
 			waitTimeout: 180 * time.Second,
@@ -506,8 +508,17 @@ func TestScreenCaptureStages(t *testing.T) {
 		}
 
 		if stage.exitKey != 0 {
-			if err := c.SendKey(stage.exitKey); err != nil {
-				t.Fatalf("failed to send exit key %q for %s: %v", stage.exitKey, stage.name, err)
+			repeats := stage.exitKeyRepeats
+			if repeats <= 0 {
+				repeats = 1
+			}
+			for i := 0; i < repeats; i++ {
+				if err := c.SendKey(stage.exitKey); err != nil {
+					t.Fatalf("failed to send exit key %q for %s: %v", stage.exitKey, stage.name, err)
+				}
+				if i+1 < repeats {
+					time.Sleep(120 * time.Millisecond)
+				}
 			}
 			if stage.captureAfterExit {
 				if stage.postExitDelay > 0 {
