@@ -304,7 +304,7 @@ void report_card_render(ReportCard *card) {
 
 void track_loop_card_init(TrackLoopCard *card) {
     test_card_init(&card->base, "READ TRACK DATA LOOP",
-                   "J/K TRACK  ENTER/X EXIT", 5U);
+                   "J/K TRACK  F/V SCROLL  X EXIT", 5U);
     track_loop_card_set_last_status(card, "OK");
     track_loop_card_set_info_status(card, S_READY);
 }

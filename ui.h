@@ -44,11 +44,11 @@ void init_ui_font(void);
 void ui_set_idle_pump(void (*pump)(void));
 
 /*
- * Set the read-cycle counter shown in the hex dump header ("DATA #N").
- * Pass 0 to suppress the counter (shows plain "DATA   :").
+ * Set the hex dump scroll row (0 = start of data).  The header shows
+ * "DATA #N" where N = row + 1, so the user always sees their position.
  * Reset automatically by ui_reset_hex_dump_panel.
  */
-void ui_set_hex_dump_cycle(unsigned int cycle);
+void ui_set_hex_dump_scroll(unsigned int row);
 
 /* Clear the terminal viewport and reset the scroll position. */
 void ui_term_clear(void);

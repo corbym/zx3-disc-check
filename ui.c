@@ -284,12 +284,6 @@ static unsigned char ui_text_screen_active;
 static const char* ui_text_screen_title;
 static const char* ui_text_screen_controls;
 
-/*
- * Hex dump panel dirty tracking.  Sentinel 0xFFFF forces the first render to
- * always draw.  Both are reset whenever the screen clears so stale data from
- * a previous card never persists on a new screen.
- */
-static unsigned short ui_hex_dump_prev_dlen = 0xFFFFU;
 
 /*
  * Per-row dirty cache.  ui_row_tag combines a text checksum with the row
@@ -316,7 +310,6 @@ void ui_reset_text_screen_cache(void) {
   ui_text_screen_active = 0;
   ui_text_screen_title = 0;
   ui_text_screen_controls = 0;
-  ui_hex_dump_prev_dlen = 0xFFFFU;
 }
 
 static unsigned char ui_line_value_col(const char* text) {
@@ -501,7 +494,6 @@ static void ui_begin_text_screen(const char* title, const char* controls) {
 
   memset(ui_row_tag, 0xFF, sizeof(ui_row_tag));
   memset(ui_row_value_col, 0xFF, sizeof(ui_row_value_col));
-  ui_hex_dump_prev_dlen = 0xFFFFU;
 
   ui_term_clear();
   ui_attr_fill(ZX_COLOUR_BLACK, ZX_COLOUR_WHITE, 0);
@@ -573,19 +565,20 @@ void ui_render_text_screen(const char* title, const char* controls,
 static const char s_hex_digits[17] = "0123456789ABCDEF";
 
 static void (*s_ui_idle_pump)(void) = 0;
-static unsigned int s_hex_dump_cycle = 0;
+static unsigned int s_hex_dump_scroll = 0;
+static unsigned int s_hex_dump_prev_scroll = 0xFFFFU;
 
 void ui_set_idle_pump(void (*pump)(void)) {
   s_ui_idle_pump = pump;
 }
 
-void ui_set_hex_dump_cycle(unsigned int cycle) {
-  s_hex_dump_cycle = cycle;
+void ui_set_hex_dump_scroll(unsigned int row) {
+  s_hex_dump_scroll = row;
 }
 
 void ui_reset_hex_dump_panel(void) {
-  ui_hex_dump_prev_dlen = 0xFFFFU;
-  s_hex_dump_cycle = 0;
+  s_hex_dump_scroll = 0;
+  s_hex_dump_prev_scroll = 0xFFFFU;
 }
 
 /*
@@ -611,22 +604,25 @@ void ui_render_hex_dump_panel(const unsigned char *data, unsigned int data_len) 
     return;
   }
 
-  /* Header: "DATA   :" normally, "DATA #N:" when a cycle counter is set. */
-  if (s_hex_dump_cycle) {
-    snprintf(row_buf, sizeof(row_buf), "DATA #%u", s_hex_dump_cycle);
-  } else {
-    snprintf(row_buf, sizeof(row_buf), "DATA   :");
+  /* Skip redraw if the scroll position hasn't changed since last render.
+   * Seeks reset s_hex_dump_prev_scroll to 0xFFFF, forcing the first draw. */
+  if (s_hex_dump_scroll == s_hex_dump_prev_scroll) {
+    return;
   }
+  s_hex_dump_prev_scroll = s_hex_dump_scroll;
+
+  /* Header: "DATA #N" where N is the 1-based scroll page. */
+  snprintf(row_buf, sizeof(row_buf), "DATA #%u", s_hex_dump_scroll + 1U);
   ui_screen_write_row(HEX_DUMP_HEADER_ROW, row_buf,
                       ZX_COLOUR_WHITE, ZX_COLOUR_BLUE, 1);
 
-  /* Render up to HEX_DUMP_DATA_ROWS rows, 8 bytes each. */
+  /* Render up to HEX_DUMP_DATA_ROWS rows, 8 bytes each, from the scroll
+   * offset.  Pump the key latch between rows so presses are not lost during
+   * the (potentially long) 13-row render on Z80. */
   for (r = 0U; r < HEX_DUMP_DATA_ROWS; r++) {
-    /* Pump the key latch between rows so key presses are not lost during
-     * the (potentially long) 13-row render on Z80. */
     if (s_ui_idle_pump) s_ui_idle_pump();
 
-    offset = (unsigned int)r * 8U;
+    offset = (unsigned int)(s_hex_dump_scroll + r) * 8U;
     if (offset >= data_len) {
       ui_screen_write_row((unsigned char)(HEX_DUMP_HEADER_ROW + 1U + r), "",
                           ZX_COLOUR_BLACK, ZX_COLOUR_WHITE, 0);

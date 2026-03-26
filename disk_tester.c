@@ -235,8 +235,10 @@ static void wait_after_test_run(unsigned char manual_run) {
 
 static const KeyMap keymap[] = {
     {0xFEFE, 0x04, 'X'},
-    {0xBFFE, 0x08, 'J'},
-    {0xBFFE, 0x04, 'K'},
+    {0xFDFE, 0x08, 'F'},  /* F: hex panel scroll up    */
+    {0xBFFE, 0x08, 'J'},  /* J: track down             */
+    {0xBFFE, 0x04, 'K'},  /* K: track up               */
+    {0xFEFE, 0x10, 'V'},  /* V: hex panel scroll down  */
     {0xFBFE, 0x01, 'Q'},
     {0xBFFE, 0x01, '\n'}
 };
@@ -921,9 +923,9 @@ static void test_read_track_data_loop(void) {
     unsigned char drive_status_st3 = 0;
     unsigned int pass_count = 0;
     unsigned int fail_count = 0;
-    unsigned int track_read_count = 0;
-    unsigned char last_rendered_track = 0xFFU;
-    unsigned int sector_data_len;
+    unsigned int sector_data_len = 0;
+    unsigned char hex_scroll_row = 0;
+    unsigned char max_scroll_rows = 0;
     unsigned char ui_redraw_required = 1;
 
     seek_result.st0 = 0;
@@ -943,6 +945,16 @@ static void test_read_track_data_loop(void) {
 #if HEADLESS_ROM_FONT
         if (pass_count + fail_count >= 3U) break;
 #endif
+        /* Pump once, then handle hex-panel scroll before track nav. */
+        pump_runtime_key_latch();
+        if (runtime_pending_key == 'F') {
+            runtime_pending_key = 0;
+            if (hex_scroll_row > 0U) hex_scroll_row--;
+        } else if (runtime_pending_key == 'V') {
+            runtime_pending_key = 0;
+            if (hex_scroll_row < max_scroll_rows) hex_scroll_row++;
+        }
+
         if (track_loop_consume_action(&current_track, &seek_required,
                                       &ui_redraw_required)) {
             break;
@@ -979,6 +991,8 @@ static void test_read_track_data_loop(void) {
                 goto track_seek_fail;
             }
             seek_required = 0;
+            hex_scroll_row = 0;
+            max_scroll_rows = 0;
             ui_redraw_required = 1;
             /* Moved to a different track — old hex dump data is stale. */
             ui_reset_hex_dump_panel();
@@ -1000,6 +1014,11 @@ static void test_read_track_data_loop(void) {
                                               fail_count, read_id_result.chrn.n);
             goto track_retry_fail;
         }
+        {
+            unsigned int total_rows = (sector_data_len + 7U) / 8U;
+            max_scroll_rows = total_rows > 13U ? total_rows - 13U : 0U;
+            if (hex_scroll_row > max_scroll_rows) hex_scroll_row = max_scroll_rows;
+        }
 
         if (!cmd_read_data(FDC_DRIVE, read_id_result.chrn.h,
                            read_id_result.chrn.c, read_id_result.chrn.h,
@@ -1015,20 +1034,9 @@ static void test_read_track_data_loop(void) {
         }
 
         pass_count++;
-        if (current_track != last_rendered_track) {
-            track_read_count = 0;
-            last_rendered_track = current_track;
-        }
-        track_read_count++;
 
-        /*
-         * Update the card with the new pass count, then blit the sector data
-         * below the card as a hex+ASCII dump.  The dump is skipped by the
-         * renderer if the sector content hasn't changed (checksum dirty check).
-         * ui_redraw_required is cleared here since we just rendered the card.
-         */
         render_track_loop_active(current_track, pass_count, fail_count);
-        ui_set_hex_dump_cycle(track_read_count);
+        ui_set_hex_dump_scroll(hex_scroll_row);
         ui_render_hex_dump_panel(sector_data, sector_data_len);
         ui_redraw_required = 0;
 
