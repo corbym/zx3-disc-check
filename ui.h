@@ -2,10 +2,6 @@
 
 #include <stdio.h>
 
-#ifndef COMPACT_UI
-#define COMPACT_UI 0
-#endif
-
 #ifndef HEADLESS_ROM_FONT
 #define HEADLESS_ROM_FONT 0
 #endif

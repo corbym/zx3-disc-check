@@ -13,7 +13,7 @@ A low-level ZX Spectrum +3 floppy drive test utility written in C and built with
 - **Recal + seek track 2** – Track-0 recalibrate then seek verification
 - **Interactive step seek** – Manually step the head track by track
 - **Read ID** – Read sector ID from track 0 (requires readable disk)
-- **Read track data loop** – Continuously reads sector data on selected track (`J`/`K` to change track)
+- **Read track data loop** – Continuously reads sector data on selected track; `J`/`K` to change track, `F`/`V` to scroll the hex+ASCII panel one row at a time
 - **Disk RPM checker** – Rotational-speed estimate from repeated ID reads; requires readable sector IDs
 - **Run all** – Execute all core tests in sequence and display a report card
 - **Show report card** – Display last run results (PASS / FAIL / NOT RUN per test)
@@ -71,7 +71,6 @@ Produces:
 | Flag | Effect |
 |------|--------|
 | `DEBUG=1` | Enable debug output (paging state, seek loops, MSR/ST0 values) |
-| `COMPACT_UI=1` | Denser font. Keep off for CI/OCR smoke tests. |
 
 ## Running
 

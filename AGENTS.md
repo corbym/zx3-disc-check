@@ -32,9 +32,11 @@ A low-level ZX Spectrum +3 floppy drive test utility written in C and Z80 assemb
 - Hardcoded Spectrum screen memory layout: `0x4000` pixels, `0x5800` attributes (color)
 - Character ROM font copied to RAM on startup before ROM paging changes (preserves correctness under DivMMC)
 - Test card abstraction: structs contain title, controls text, and result lines; rendering handles styling via attribute bytes
-- Build flag: `COMPACT_UI=1` uses denser font (default is larger, required for CI OCR tests)
+- Build flag: `HEADLESS_ROM_FONT=1` forces ROM glyphs in headless/OCR builds for maximum OCR recognition stability
 - **Row dirty cache**: `ui_row_tag[24]` holds a per-row DJB2 checksum combined with the row style. `ui_render_cached_text_row` skips the expensive pixel+attr write when the tag matches. Always invalidate with `ui_reset_text_screen_cache()` before switching away from the text-screen path.
 - **Label/value separation convention**: row headers (`"RESULT: "`, `"STATUS: "`, `"TRACK : "`, etc.) must never be embedded inside value strings. Use `test_card_set_labeled_value(card, row, LABEL, value, fallback)` for body rows. For the result row at the bottom, call `test_card_render(card, "RESULT: ", value)` — the label is passed as a separate argument and composed into a stack buffer at render time. This keeps each prefix string in the binary exactly once, reducing ROM pressure on the Z80.
+- **Hex dump panel** (`ui_render_hex_dump_panel`): renders rows 10–23 as a hex+ASCII preview of sector data. Row 10 is a header ("DATA #N" where N is the 1-based scroll page); rows 11–23 show up to 13 rows × 8 bytes from the current scroll offset. The panel has its own dirty tracking via `s_hex_dump_prev_scroll`: it skips all pixel writes when the scroll position is unchanged since the last render. Call `ui_reset_hex_dump_panel()` on track change to force a redraw on the next call. Call `ui_set_hex_dump_scroll(row)` to change the visible window; `ui_reset_hex_dump_panel` also resets scroll to 0.
+- **Idle pump** (`ui_set_idle_pump`): optional callback invoked once per row during `ui_render_hex_dump_panel`. Use this to keep the key-scan latch alive during the (potentially long) 13-row render on Z80. Wire it to `pump_runtime_key_latch` at loop entry and clear it to NULL at exit — same pattern as `disk_operations_set_idle_pump`.
 
 **Main Test Loop** (`disk_tester.c`)
 - Holds state for all 7 tests: result codes, diagnostic bytes from FDC
@@ -66,7 +68,6 @@ When memory budget tests fail, treat `ZX3_STR_STORAGE` in `shared_strings.h` as 
 ```bash
 ./build.sh                           # TAP + DSK, default UI
 DEBUG=1 ./build.sh                   # Enable FDC debug output (MSR/ST0 trace)
-COMPACT_UI=1 ./build.sh              # Denser font for CI OCR
 HEADLESS_ROM_FONT=1 ./build.sh       # (advanced) use DivMMC's pre-copied font
 ```
 
@@ -131,10 +132,12 @@ Test logic writes results to a `TestCard` struct; rendering function converts to
 
 ## Files You'll Likely Edit
 
-- **`disk_tester.c`** – Main test logic, FDC command sequences, timing loops
+- **`disk_tester.c`** – Main test logic, FDC command sequences, timing loops, runtime keymap
 - **`disk_operations.c`** – Low-level uPD765A command implementations (recal, seek, read ID, read data)
 - **`menu_system.c`** – Keyboard matrix scanning, key latching (if adding input)
-- **`ui.c`** – Screen rendering (if changing layout or adding test results display)
+- **`ui.c`** – Screen rendering, hex dump panel, row dirty cache, idle pump
+- **`test_cards.c`** / **`test_cards.h`** – TestCard struct definitions, init/set/render helpers for each test screen
+- **`shared_strings.c`** / **`shared_strings.h`** – Shared string literals (reduces duplicate string storage in CODE.bin)
 - **`intstate.asm`** – Motor control, I/O atomicity (rarely touched; motor bit must always preserve other paging)
 - **`build.sh`** – Build flags and z88dk arguments
 
@@ -173,11 +176,12 @@ The static-variable optimization remains valid for frequently-read scalar state 
 - Edit `menu_keymap[]` table in `menu_system.c` (row_port, bit_mask, mapped char)
 - Latching logic prevents bouncing across multiple scan cycles
 - Navigation (up/down) handled separately via `w_pressed()`/`s_pressed()` checks
+- The read-track-data loop uses its own `keymap[]` table in `disk_tester.c` with a separate latch (`runtime_key_latched[]`, `runtime_pending_key`). This is polled via `pump_runtime_key_latch()`, called both at the top of each loop iteration and as the idle pump during FDC waits and hex panel rendering. Add loop-specific keys here, not to the menu keymap.
 
 **Change UI layout:**
 - Update screen dimensions and memory addresses in `ui.h` (e.g., `ZX_PIXELS_BASE`)
 - Edit rendering loops in `ui.c` to reposition test cards
-- Rebuild with `COMPACT_UI=0` (default) for real hardware; OCR tests require non-compact variant
+- Rebuild with default (no flags) for real hardware; OCR tests use the same standard ROM font build
 
 # Less common tasks but worth mentioning
 
