@@ -82,10 +82,12 @@ jobs:
             zx3-disk-test:ci \
             bash -c "cd /workspace && go test ./tests -count=1 -v -run 'TestTapCodeSizeBudget|TestMapHeapStackHeadroom|TestMenu|TestReport|TestReturn|TestRunAll|TestMotor'"
 
-      - name: Run screenshot capture tests (headed font)
+      - name: Run screenshot capture tests (ROM font)
         run: |
           docker run --rm \
             -e ZX3_REQUIRE_EMU_SMOKE=1 \
+            -e ZX3_TAP_PATH=out/headless/disk_tester.tap \
+            -e ZX3_DSK_PATH=out/headless/disk_tester_plus3.dsk \
             -v ${{ github.workspace }}:/workspace \
             zx3-disk-test:ci \
             bash -c "cd /workspace && go test ./tests -count=1 -v -run TestScreenCaptureStages"

@@ -27,12 +27,20 @@ func TestMain(m *testing.M) {
 	repoRoot := filepath.Clean(filepath.Join(cwd, ".."))
 	repoRootPath = repoRoot
 
-	tapPath, err = absPathFromRepo(repoRoot, "out/disk_tester.tap")
+	tapRel := "out/disk_tester.tap"
+	if env := os.Getenv("ZX3_TAP_PATH"); env != "" {
+		tapRel = env
+	}
+	tapPath, err = absPathFromRepo(repoRoot, tapRel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to resolve TAP path: %v\n", err)
 		os.Exit(1)
 	}
-	dskPath, err = absPathFromRepo(repoRoot, "out/disk_tester_plus3.dsk")
+	dskRel := "out/disk_tester_plus3.dsk"
+	if env := os.Getenv("ZX3_DSK_PATH"); env != "" {
+		dskRel = env
+	}
+	dskPath, err = absPathFromRepo(repoRoot, dskRel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to resolve DSK path: %v\n", err)
 		os.Exit(1)
@@ -87,7 +95,9 @@ func resetAndLoadTap(t *testing.T, c *EmulatorClient) {
 
 func waitForMenu(t *testing.T, c *EmulatorClient, timeout time.Duration) {
 	t.Helper()
-	if out, err := c.WaitForOCR(timeout, "ZX +3 DISK TESTER", "ENTER: SELECT"); err != nil {
+	// "ZX +3 DISK TESTER" is split across two markers to avoid depending on
+	// the '+' character, which is absent from the headed compact font.
+	if out, err := c.WaitForOCR(timeout, "DISK TESTER", "ENTER: SELECT"); err != nil {
 		t.Fatalf("timed out waiting for menu: %v, got: \n\n/btw%v", err, out)
 	}
 }
@@ -237,7 +247,7 @@ func TestRunAllCompletes(t *testing.T) {
 	if err := c.HardReset(); err != nil {
 		t.Fatalf("failed hard-reset after DSK smartload: %v", err)
 	}
-	if _, err := c.WaitForOCR(20*time.Second, "ZX +3 DISK TESTER", "ENTER: SELECT"); err != nil {
+	if _, err := c.WaitForOCR(20*time.Second, "DISK TESTER", "ENTER: SELECT"); err != nil {
 		t.Fatalf("timed out waiting for menu after DSK load: %v", err)
 	}
 
@@ -375,14 +385,14 @@ func TestScreenCaptureStages(t *testing.T) {
 		for time.Now().Before(deadline) {
 			if ocr, err := c.OCR(); err == nil {
 				lastOCR = ocr
-				if containsAll(ocr, "ZX +3 DISK TESTER", "ENTER: SELECT") {
+				if containsAll(ocr, "DISK TESTER", "ENTER: SELECT") {
 					return
 				}
 			}
 			if err := c.SendKey(13); err != nil {
 				t.Fatalf("failed to send Enter key: %v", err)
 			}
-			if _, err := c.WaitForOCR(1500*time.Millisecond, "ZX +3 DISK TESTER", "ENTER: SELECT"); err == nil {
+			if _, err := c.WaitForOCR(1500*time.Millisecond, "DISK TESTER", "ENTER: SELECT"); err == nil {
 				return
 			}
 			time.Sleep(250 * time.Millisecond)
@@ -420,9 +430,11 @@ func TestScreenCaptureStages(t *testing.T) {
 			nonBlank:    true,
 		},
 		{
+			// "DISK TESTER" avoids the '+' in "ZX +3 DISK TESTER", which is
+			// absent from the headed compact font and would cause OCR misses.
 			name:        "menu",
 			captureFile: "01_menu.bmp",
-			waitFor:     []string{"ZX +3 DISK TESTER", "ENTER: SELECT"},
+			waitFor:     []string{"DISK TESTER", "ENTER: SELECT"},
 			waitTimeout: 20 * time.Second,
 			enterToMenu: true,
 			nonBlank:    true,
@@ -430,7 +442,7 @@ func TestScreenCaptureStages(t *testing.T) {
 		{
 			name:        "menu after motor",
 			captureFile: "03_menu_after_motor.bmp",
-			waitFor:     []string{"ZX +3 DISK TESTER", "ENTER: SELECT"},
+			waitFor:     []string{"DISK TESTER", "ENTER: SELECT"},
 			waitTimeout: 10 * time.Second,
 			nonBlank:    true,
 		},
@@ -445,7 +457,7 @@ func TestScreenCaptureStages(t *testing.T) {
 		{
 			name:        "menu after report",
 			captureFile: "05_menu_after_report.bmp",
-			waitFor:     []string{"ZX +3 DISK TESTER", "ENTER: SELECT"},
+			waitFor:     []string{"DISK TESTER", "ENTER: SELECT"},
 			waitTimeout: 20 * time.Second,
 			enterToMenu: true,
 			nonBlank:    true,
@@ -464,7 +476,7 @@ func TestScreenCaptureStages(t *testing.T) {
 			settleDelay:     1500 * time.Millisecond, // let hex panel populate
 			exitKey:         'X',
 			exitKey2:        'X', // read_enter_blocking accepts X; avoids CR/LF mapping ambiguity
-			exitWaitFor:     []string{"ZX +3 DISK TESTER", "ENTER: SELECT"},
+			exitWaitFor:     []string{"DISK TESTER", "ENTER: SELECT"},
 			exitTimeout:     30 * time.Second,
 			nonBlank:        true,
 			maxDiffFraction: 0.10,
@@ -489,7 +501,7 @@ func TestScreenCaptureStages(t *testing.T) {
 			if err := c.HardReset(); err != nil {
 				t.Fatalf("failed hard-reset after DSK smartload for %s: %v", stage.name, err)
 			}
-			if _, err := c.WaitForOCR(20*time.Second, "ZX +3 DISK TESTER", "ENTER: SELECT"); err != nil {
+			if _, err := c.WaitForOCR(20*time.Second, "DISK TESTER", "ENTER: SELECT"); err != nil {
 				t.Fatalf("timed out waiting for menu after DSK load for %s: %v", stage.name, err)
 			}
 		}
