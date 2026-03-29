@@ -172,3 +172,53 @@ func TestWriteRowDoesNotCallFillRow(t *testing.T) {
 		t.Fatalf("ui_screen_write_row must use memset for attr row and tail-clear; fast render path may have been removed")
 	}
 }
+
+func TestRpmRevolutionCounterResetsSeenOther(t *testing.T) {
+	src := loadDiskOperationsSource(t)
+
+	if !strings.Contains(src, "result.chrn.r != first_r") {
+		t.Fatal("fdc_measure_revolutions_ticks must include R mismatch in non-reference-sector detection")
+	}
+	if !strings.Contains(src, "step_count >= min_steps_per_rev") {
+		t.Fatal("fdc_measure_revolutions_ticks must require a minimum transition count before accepting a revolution")
+	}
+	if !strings.Contains(src, "seen_other = 0;") {
+		t.Fatal("fdc_measure_revolutions_ticks must reset seen_other after each counted revolution to prevent double-counting")
+	}
+}
+
+func TestRpmMeasurementFunctionUsesMinimalPacingDelay(t *testing.T) {
+	src := loadDiskOperationsSource(t)
+
+	// Locate the measurement function body.
+	start := strings.Index(src, "fdc_measure_revolutions_ticks(")
+	if start < 0 {
+		t.Fatal("fdc_measure_revolutions_ticks not found in disk_operations.c")
+	}
+	// Find the opening brace of the function definition (not the declaration).
+	defStart := strings.Index(src[start:], "{\n")
+	if defStart < 0 {
+		t.Fatal("could not locate fdc_measure_revolutions_ticks function body")
+	}
+	body := src[start+defStart:]
+	// Find matching closing brace (simple: stop at next top-level function).
+	nextFunc := regexp.MustCompile(`\nunsigned |\nstatic |\nvoid `)
+	loc := nextFunc.FindStringIndex(body[2:])
+	if loc != nil {
+		body = body[:loc[0]+2]
+	}
+
+	if !strings.Contains(body, "delay_ms(1)") {
+		t.Fatal("fdc_measure_revolutions_ticks should use a minimal delay_ms(1) pacing gap to avoid emulator/controller overrun artifacts")
+	}
+	if strings.Contains(body, "delay_ms(2)") || strings.Contains(body, "delay_ms(5)") {
+		t.Fatal("fdc_measure_revolutions_ticks must not use coarse delays (>1 ms), which bias RPM downward")
+	}
+}
+
+func TestRpmCheckerUsesMeasurementFunction(t *testing.T) {
+	src := loadDiskTesterSource(t)
+	if !strings.Contains(src, "fdc_measure_revolutions_ticks(") {
+		t.Fatal("test_rpm_checker must use fdc_measure_revolutions_ticks for revolution timing")
+	}
+}

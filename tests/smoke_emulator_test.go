@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -27,7 +29,7 @@ func TestMain(m *testing.M) {
 	repoRoot := filepath.Clean(filepath.Join(cwd, ".."))
 	repoRootPath = repoRoot
 
-	tapRel := "out/disk_tester.tap"
+	tapRel := "out/headless/disk_tester.tap"
 	if env := os.Getenv("ZX3_TAP_PATH"); env != "" {
 		tapRel = env
 	}
@@ -36,7 +38,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "failed to resolve TAP path: %v\n", err)
 		os.Exit(1)
 	}
-	dskRel := "out/disk_tester_plus3.dsk"
+	dskRel := "out/headless/disk_tester_plus3.dsk"
 	if env := os.Getenv("ZX3_DSK_PATH"); env != "" {
 		dskRel = env
 	}
@@ -46,11 +48,11 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	if _, err := os.Stat(tapPath); err != nil {
-		fmt.Fprintf(os.Stderr, "expected TAP output missing: %s (build artifacts first via CI build step or ./build.sh)\n", tapPath)
+		fmt.Fprintf(os.Stderr, "expected TAP output missing: %s (build artifacts first via ./deploy.sh)\n", tapPath)
 		os.Exit(1)
 	}
 	if _, err := os.Stat(dskPath); err != nil {
-		fmt.Fprintf(os.Stderr, "expected DSK output missing: %s (build artifacts first via CI build step or ./build.sh)\n", dskPath)
+		fmt.Fprintf(os.Stderr, "expected DSK output missing: %s (build artifacts first via ./deploy.sh)\n", dskPath)
 		os.Exit(1)
 	}
 
@@ -347,6 +349,100 @@ func TestMotorStatusMenu(t *testing.T) {
 		}
 	}
 	t.Fatalf("motor status screen did not appear in time\nlast OCR:\n%s", lastOCR)
+}
+
+// parseRpmFromOCR extracts the numeric RPM value from an OCR string containing
+// a line like "RPM   : 300".  Returns (value, true) on success.
+func parseRpmFromOCR(ocr string) (int, bool) {
+	re := regexp.MustCompile(`(?i)RPM\s*:\s*(\d+)`)
+	m := re.FindStringSubmatch(ocr)
+	if len(m) < 2 {
+		return 0, false
+	}
+	v, err := strconv.Atoi(m[1])
+	if err != nil || v <= 0 {
+		return 0, false
+	}
+	return v, true
+}
+
+// TestDiskRpmCheck loads the DSK, opens the RPM checker, and verifies that the
+// emulator consistently reports a reading close to 300 RPM.
+//
+// The emulator spins the virtual disk at exactly 300 RPM.  With 4-revolution
+// averaging and the minimum-of-5-samples strategy, readings should cluster
+// tightly around 300 RPM.  The ±15 RPM window (285–315) allows for the ±1
+// frame-tick (20 ms) quantisation error that is unavoidable with the 50 Hz
+// FRAMES counter.
+func TestDiskRpmCheck(t *testing.T) {
+	c := requireSuiteClient(t)
+	resetAndLoadTap(t, c)
+	waitForMenu(t, c, 30*time.Second)
+
+	// Load DSK so the drive has readable media.
+	if err := c.Smartload(dskPath); err != nil {
+		t.Fatalf("failed to smartload DSK: %v", err)
+	}
+	if err := c.HardReset(); err != nil {
+		t.Fatalf("failed hard-reset after DSK load: %v", err)
+	}
+	if _, err := c.WaitForOCR(20*time.Second, "DISK TESTER", "ENTER: SELECT"); err != nil {
+		t.Fatalf("timed out waiting for menu after DSK load: %v", err)
+	}
+
+	// 'H' opens the RPM checker.
+	if err := c.SendKey('H'); err != nil {
+		t.Fatalf("failed to send H key: %v", err)
+	}
+
+	// Wait for the RPM card to appear; sample values may take a few seconds.
+	if _, err := c.WaitForOCR(30*time.Second, "DISK RPM LOOP", "RPM"); err != nil {
+		t.Fatalf("timed out waiting for RPM card to appear: %v", err)
+	}
+
+	// Collect readings and require 5 consecutive ones inside the window.
+	// Each measurement batch takes ~4.0 s (5 samples × 4 revolutions × 200 ms),
+	// so 5 consecutive good readings means sustained stable behavior.
+	const (
+		rpmLow          = 285
+		rpmHigh         = 315
+		wantConsecutive = 5
+	)
+	consecutive := 0
+	lastOCR := ""
+	deadline := time.Now().Add(140 * time.Second)
+
+	for time.Now().Before(deadline) {
+		ocr, err := c.OCR()
+		if err != nil {
+			time.Sleep(300 * time.Millisecond)
+			continue
+		}
+		lastOCR = ocr
+
+		rpm, ok := parseRpmFromOCR(ocr)
+		if ok {
+			if rpm >= rpmLow && rpm <= rpmHigh {
+				consecutive++
+				t.Logf("RPM reading %d in range [%d,%d] (%d/%d)", rpm, rpmLow, rpmHigh, consecutive, wantConsecutive)
+				if consecutive >= wantConsecutive {
+					// Clean up: exit the RPM loop before returning.
+					_ = c.SendKey('X')
+					_, _ = c.WaitForOCR(10*time.Second, "DISK TESTER", "ENTER: SELECT")
+					return
+				}
+			} else {
+				t.Logf("RPM reading %d out of range [%d,%d] — resetting consecutive counter", rpm, rpmLow, rpmHigh)
+				consecutive = 0
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	// Exit RPM loop before failing so the emulator is in a clean state.
+	_ = c.SendKey('X')
+	t.Fatalf("did not get %d consecutive RPM readings in [%d,%d] range\nlast OCR:\n%s",
+		wantConsecutive, rpmLow, rpmHigh, lastOCR)
 }
 
 func TestScreenCaptureStages(t *testing.T) {

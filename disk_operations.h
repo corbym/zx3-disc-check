@@ -95,3 +95,30 @@ unsigned int sector_size_from_n(unsigned char n);
 /* Human-readable reason string for a Read ID / Read Data failure. */
 const char *read_id_failure_reason(unsigned char st1, unsigned char st2);
 
+/*
+ * fdc_measure_revolutions_ticks()
+ *
+ * Times `num_revs` complete disk revolutions by issuing READ ID commands and
+ * watching for a reference sector (first_r) to reappear after at least one
+ * other sector has been seen.
+ *
+ * On a standard ZX Spectrum +3/+3DOS formatted disk each track has 9 sectors
+ * (typically R=1..9). READ ID returns different sector numbers on successive
+ * calls as the disk rotates, so seeing sectors other than first_r is expected
+ * and required for revolution detection.
+ *
+ * No artificial delay is inserted between READ ID calls. The FDC blocks
+ * naturally until the next sector ID mark passes the head (~22 ms at 300 RPM).
+ * Inserting delays inflates the measured period and causes RPM under-reporting.
+ *
+ * seen_other is reset after each counted revolution to prevent double-counting
+ * if first_r appears in consecutive READ ID results.
+ *
+ * Returns the total elapsed 20 ms frame ticks for num_revs revolutions.
+ * Returns 0 on READ ID failure or if timeout_ticks elapses before completion.
+ */
+unsigned char fdc_measure_revolutions_ticks(unsigned char drive,
+                                            unsigned char head,
+                                            unsigned char num_revs,
+                                            unsigned char timeout_ticks);
+

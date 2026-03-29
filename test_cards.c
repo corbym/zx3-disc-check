@@ -451,10 +451,6 @@ void rpm_loop_card_set_no_measurement(RpmLoopCard *card,
     rpm_loop_card_set_info_status(card, seen_other ? "NO MARK" : "SAME SEC");
 }
 
-void rpm_loop_card_set_period_bad(RpmLoopCard *card) {
-    rpm_loop_card_set_last_status(card, "PERIOD BAD");
-    rpm_loop_card_set_info_status(card, "ZERO DELTA");
-}
 
 void rpm_loop_card_set_sample_ready(RpmLoopCard *card) {
     rpm_loop_card_set_last_status(card, "SAMPLE OK");

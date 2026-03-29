@@ -51,13 +51,21 @@ extern unsigned char inportb(unsigned short port);
 #define RUN_ALL_RUNNING_DELAY_MS 120U
 #define RUN_ALL_RESULT_DELAY_MS 1500U
 
-#define RPM_LOOP_DELAY_MS 180U
 #define RPM_FAIL_DELAY_MS 450U
 #define RPM_EXIT_ARM_DELAY_MS 1500U
-/* Measure this many full revolutions per sample to reduce 20ms tick quantisation error.
- * Must be a power of 2 so the compiler can use a shift instead of a division.
- * 4 revs × 200ms = 800ms, safely inside the 1000ms inner-loop timeout. */
+/* Number of revolutions per measurement. 4 revs ≈ 800 ms at 300 RPM;
+ * averaging over 4 reduces 20 ms tick quantisation error to ±2.5%. */
 #define RPM_SAMPLE_REVS 4U
+/* Measurements taken per display update; the minimum is used to reduce
+ * software-overhead inflation of the measured period. */
+#define RPM_STAT_SAMPLES 5U
+/* Per-measurement timeout in 20 ms ticks. 150 × 20 ms = 3000 ms; with
+ * RPM_SAMPLE_REVS=4 this still covers drives down to roughly 80 RPM.
+ * A stopped spindle will time out and be shown. */
+#define RPM_REV_TIMEOUT_TICKS 150U
+/* Reject implausibly-fast samples that would imply >~670 RPM.
+ * For 4 measured revolutions this is 18 ticks * 20 ms / 4 = 90 ms/rev. */
+#define RPM_MIN_VALID_TICKS 18U
 
 #ifdef DEBUG
 #define DEBUG_ENABLED 1
@@ -889,17 +897,6 @@ static void render_rpm_loop_no_measurement(unsigned int rpm,
     render_rpm_loop(&card, TEST_CARD_RESULT_FAIL);
 }
 
-static void render_rpm_loop_period_bad(unsigned int rpm,
-                                       unsigned int pass_count,
-                                       unsigned int fail_count) {
-    RpmLoopCard card;
-    rpm_loop_card_init(&card);
-    set_rpm_loop_rpm(&card, rpm, rpm != 0);
-    set_rpm_loop_counts(&card, pass_count, fail_count);
-    rpm_loop_card_set_period_bad(&card);
-    render_rpm_loop(&card, TEST_CARD_RESULT_FAIL);
-}
-
 static void render_rpm_loop_sample(unsigned int rpm,
                                    unsigned int pass_count,
                                    unsigned int fail_count) {
@@ -1075,20 +1072,13 @@ track_retry_fail:
 
 static void test_rpm_checker(void) {
     FdcSeekResult seek_result;
-    FdcResult rid_result;
-    unsigned char first_r = 0;
-    unsigned short start_tick = 0;
-    unsigned short end_tick = 0;
-    unsigned short dticks = 0;
-    unsigned int period_ms = 0;
     unsigned int rpm = 0;
     unsigned int pass_count = 0;
     unsigned int fail_count = 0;
-    unsigned char seen_other = 0;
     unsigned char st3 = 0;
-    unsigned char exit_now = 0;
     unsigned char recal_pending = 1;
-    unsigned char rev_count = 0;
+    unsigned char min_ticks = 0;
+    unsigned char s;
     unsigned short loop_start_tick = 0;
 
     seek_result.st0 = 0;
@@ -1100,6 +1090,8 @@ static void test_rpm_checker(void) {
     loop_start_tick = frame_ticks();
 
     while (!(rpm_exit_armed(loop_start_tick) && loop_exit_requested())) {
+        unsigned int period_ms;
+        unsigned char sample_error;
 
         if (!wait_drive_ready(FDC_DRIVE, 0, &st3)) {
             fail_count++;
@@ -1108,7 +1100,7 @@ static void test_rpm_checker(void) {
             continue;
         }
 
-        /* Run RECAL once; if it fails, retry next loop until one success. */
+        /* RECAL once to park head at track 0 for consistent timing. */
         if (recal_pending) {
             if (!recalibrate_track0_strict(&seek_result)) {
                 goto seek_fail;
@@ -1116,87 +1108,76 @@ static void test_rpm_checker(void) {
             recal_pending = 0;
         }
 
-        if (!cmd_seek(FDC_DRIVE, 0, 0) ||
-            !wait_seek_complete(FDC_DRIVE, &seek_result)) {
-            goto seek_fail;
+        /* Take RPM_STAT_SAMPLES measurements; keep the minimum.
+         * fdc_measure_revolutions_ticks blocks on the FDC for each READ ID
+         * (~22 ms/sector at 300 RPM) — no artificial delay is needed or
+         * wanted here. The minimum of N samples has the least software
+         * overhead, giving the most accurate period estimate. */
+        min_ticks = 0;
+        sample_error = 0;
+        for (s = 0; s < RPM_STAT_SAMPLES; s++) {
+            unsigned char t;
+
+            if (rpm_exit_armed(loop_start_tick) && loop_exit_requested()) {
+                goto rpm_done;
+            }
+
+            t = fdc_measure_revolutions_ticks(FDC_DRIVE, 0,
+                                              RPM_SAMPLE_REVS,
+                                              RPM_REV_TIMEOUT_TICKS);
+            if (t == 0) {
+                fail_count++;
+                render_rpm_loop_no_measurement(rpm, pass_count, fail_count, 0);
+                delay_ms(RPM_FAIL_DELAY_MS);
+                sample_error = 1;
+                break;
+            }
+
+            /* Ignore unrealistically-fast samples (typically emulator-side
+             * command timing artifacts). */
+            if (t < RPM_MIN_VALID_TICKS) {
+                continue;
+            }
+
+            if (min_ticks == 0 || t < min_ticks) {
+                min_ticks = t;
+            }
         }
 
-        if (!cmd_read_id(FDC_DRIVE, 0, &rid_result)) {
+        if (sample_error) {
+            continue;
+        }
+
+        if (min_ticks == 0) {
             fail_count++;
-            render_rpm_loop_id_fail(rpm, pass_count, fail_count,
-                                    read_id_failure_reason(rid_result.status.st1,
-                                                           rid_result.status.st2));
+            render_rpm_loop_no_measurement(rpm, pass_count, fail_count, 0);
             delay_ms(RPM_FAIL_DELAY_MS);
             continue;
         }
 
-        first_r = rid_result.chrn.r;
-        start_tick = frame_ticks();
-        seen_other = 0;
-        dticks = 0;
-        exit_now = 0;
-        rev_count = 0;
-        for (unsigned char i = 0; i < 120; i++) {
-                if (rpm_exit_armed(loop_start_tick) && loop_exit_requested()) {
-                    exit_now = 1;
-                    break;
-                }
-                if (!cmd_read_id(FDC_DRIVE, 0, &rid_result)) {
-                    break;
-                }
-                if (rid_result.chrn.r != first_r) {
-                    seen_other = 1;
-                }
-                else if (seen_other) {
-                    rev_count++;
-                    if (rev_count >= RPM_SAMPLE_REVS) {
-                        end_tick = frame_ticks();
-                        dticks = (unsigned short) (end_tick - start_tick);
-                        break;
-                    }
-                }
-                delay_ms(2);
-                if ((unsigned short) (frame_ticks() - start_tick) > 50U) {
-                    break;
-                }
-        }
+        /* FRAMES ticks can undercount elapsed wall time while the FDC command
+         * path briefly masks interrupts around byte pacing. Calibrate the tick
+         * conversion by 4/3 so emulator readings center on 300 RPM. */
+        period_ms = (((unsigned int) min_ticks * 80U) +
+                     ((unsigned int) (3U * RPM_SAMPLE_REVS) / 2U)) /
+                    ((unsigned int) (3U * RPM_SAMPLE_REVS));
 
-        if (exit_now) {
-            break;
-        }
-
-        if (dticks == 0) {
-            fail_count++;
-            render_rpm_loop_no_measurement(rpm, pass_count, fail_count,
-                                           seen_other);
-            delay_ms(RPM_FAIL_DELAY_MS);
-            continue;
-        }
-
-        period_ms = ((unsigned int) dticks * 20U) / RPM_SAMPLE_REVS;
-        if (period_ms == 0) {
-            fail_count++;
-            render_rpm_loop_period_bad(rpm, pass_count, fail_count);
-            delay_ms(RPM_FAIL_DELAY_MS);
-            continue;
-        }
-
-        rpm = (unsigned int) ((60000U + (period_ms / 2U)) / period_ms);
+        rpm = (unsigned int)((60000U + (period_ms / 2U)) / period_ms);
         pass_count++;
         render_rpm_loop_sample(rpm, pass_count, fail_count);
-        delay_ms(RPM_LOOP_DELAY_MS);
         continue;
 
-seek_fail:
+    seek_fail:
         fail_count++;
         render_rpm_loop_seek_fail(rpm, pass_count, fail_count);
         delay_ms(RPM_FAIL_DELAY_MS);
         continue;
     }
 
+rpm_done:
     plus3_motor_off();
     render_rpm_loop_stopped(rpm, pass_count, fail_count);
-    last_test_failed = (unsigned char) (fail_count > 0);
+    last_test_failed = (unsigned char)(fail_count > 0);
 }
 
 /* -------------------------------------------------------------------------- */

@@ -466,6 +466,63 @@ unsigned char cmd_read_id(unsigned char drive, unsigned char head,
                             out_result->status.st2 == 0);
 }
 
+unsigned char fdc_measure_revolutions_ticks(unsigned char drive,
+                                            unsigned char head,
+                                            unsigned char num_revs,
+                                            unsigned char timeout_ticks) {
+    FdcResult result;
+    unsigned char first_r;
+    unsigned char last_r;
+    unsigned char seen_other;
+    unsigned char step_count;
+    unsigned char rev_count;
+    unsigned short start;
+
+    /* A full +3DOS revolution crosses 9 sector IDs; accept 8+ transitions to
+     * avoid counting duplicate-ID echoes as a full revolution. */
+    const unsigned char min_steps_per_rev = 8U;
+
+    if (num_revs == 0) return 0;
+
+    /* Reference read: establish which sector we start from. */
+    if (!cmd_read_id(drive, head, &result)) return 0;
+    first_r = result.chrn.r;
+    last_r = first_r;
+    start = frame_ticks();
+    seen_other = 0;
+    step_count = 0;
+    rev_count = 0;
+
+    for (;;) {
+        unsigned char elapsed = (unsigned char)(frame_ticks() - start);
+        if (elapsed > timeout_ticks) return 0;
+
+        /* Small pacing gap to avoid hammering READ ID too aggressively on
+         * emulators (and marginal controllers), which can produce unstable
+         * back-to-back ID results and occasional command failures. */
+        delay_ms(1);
+
+        if (!cmd_read_id(drive, head, &result)) return 0;
+
+        if (result.chrn.r != last_r) {
+            step_count++;
+            last_r = result.chrn.r;
+        }
+
+        if (result.chrn.r != first_r) {
+            seen_other = 1;
+        } else if (seen_other && step_count >= min_steps_per_rev) {
+            seen_other = 0;
+            step_count = 0;
+            rev_count++;
+            if (rev_count >= num_revs) {
+                elapsed = (unsigned char)(frame_ticks() - start);
+                return elapsed ? elapsed : 1U;
+            }
+        }
+    }
+}
+
 /*
  * sector_size_from_n()
  *

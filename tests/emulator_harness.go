@@ -112,8 +112,21 @@ func spawnEmulator(emulatorPath string, port int) (*exec.Cmd, error) {
 	}
 
 	cmd := exec.Command(emulatorPath, args...)
-	cmd.Env = append(os.Environ(), "HOME=/tmp/zesarux-smoketest-home-go")
-	if err := os.MkdirAll("/tmp/zesarux-smoketest-home-go", 0o755); err != nil {
+
+	// Build a clean env with HOME replaced (not duplicated) so ZEsarUX
+	// cannot read or write the user's real ~/.zesaruxrc.
+	const safeHome = "/tmp/zesarux-smoketest-home-go"
+	baseEnv := os.Environ()
+	filteredEnv := make([]string, 0, len(baseEnv)+1)
+	for _, e := range baseEnv {
+		if !strings.HasPrefix(e, "HOME=") {
+			filteredEnv = append(filteredEnv, e)
+		}
+	}
+	filteredEnv = append(filteredEnv, "HOME="+safeHome)
+	cmd.Env = filteredEnv
+
+	if err := os.MkdirAll(safeHome, 0o755); err != nil {
 		return nil, err
 	}
 
