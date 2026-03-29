@@ -873,18 +873,6 @@ static void render_rpm_loop_seek_fail(unsigned int rpm,
     render_rpm_loop(&card, TEST_CARD_RESULT_FAIL);
 }
 
-static void render_rpm_loop_id_fail(unsigned int rpm,
-                                    unsigned int pass_count,
-                                    unsigned int fail_count,
-                                    const char *reason) {
-    RpmLoopCard card;
-    rpm_loop_card_init(&card);
-    set_rpm_loop_rpm(&card, rpm, rpm != 0);
-    set_rpm_loop_counts(&card, pass_count, fail_count);
-    rpm_loop_card_set_id_fail(&card, reason);
-    render_rpm_loop(&card, TEST_CARD_RESULT_FAIL);
-}
-
 static void render_rpm_loop_no_measurement(unsigned int rpm,
                                            unsigned int pass_count,
                                            unsigned int fail_count,
@@ -909,6 +897,19 @@ static void render_rpm_loop_sample(unsigned int rpm,
                     (rpm >= 285U && rpm <= 315U)
                     ? TEST_CARD_RESULT_PASS
                     : TEST_CARD_RESULT_OUT_OF_RANGE);
+}
+
+static void render_rpm_loop_active_phase(unsigned int rpm,
+                                         unsigned int pass_count,
+                                         unsigned int fail_count,
+                                         const char *info) {
+    RpmLoopCard card;
+    rpm_loop_card_init(&card);
+    set_rpm_loop_rpm(&card, rpm, rpm != 0);
+    set_rpm_loop_counts(&card, pass_count, fail_count);
+    rpm_loop_card_set_last_status(&card, "RUN");
+    rpm_loop_card_set_info_status(&card, info ? info : "RUN");
+    render_rpm_loop(&card, TEST_CARD_RESULT_ACTIVE);
 }
 
 static void render_rpm_loop_stopped(unsigned int rpm,
@@ -1113,6 +1114,7 @@ static void test_rpm_checker(void) {
          * (~22 ms/sector at 300 RPM) — no artificial delay is needed or
          * wanted here. The minimum of N samples has the least software
          * overhead, giving the most accurate period estimate. */
+        render_rpm_loop_active_phase(rpm, pass_count, fail_count, "READ ID");
         min_ticks = 0;
         sample_error = 0;
         for (s = 0; s < RPM_STAT_SAMPLES; s++) {

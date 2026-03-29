@@ -139,7 +139,6 @@ void rpm_loop_card_set_info_status(RpmLoopCard* card,
                                    const char* status_value);
 void rpm_loop_card_set_drive_not_ready(RpmLoopCard* card);
 void rpm_loop_card_set_seek_fail(RpmLoopCard* card);
-void rpm_loop_card_set_id_fail(RpmLoopCard* card, const char* reason);
 void rpm_loop_card_set_no_measurement(RpmLoopCard* card,
                                       unsigned char seen_other);
 void rpm_loop_card_set_sample_ready(RpmLoopCard* card);

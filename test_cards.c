@@ -340,7 +340,7 @@ void track_loop_card_set_info_status(TrackLoopCard *card,
 
 void track_loop_card_set_active(TrackLoopCard *card) {
     track_loop_card_set_last_status(card, "OK");
-    track_loop_card_set_info_status(card, "LOOPING");
+    track_loop_card_set_info_status(card, "RID+DAT");
 }
 
 void track_loop_card_set_drive_not_ready(TrackLoopCard *card,
@@ -440,10 +440,6 @@ void rpm_loop_card_set_seek_fail(RpmLoopCard *card) {
     rpm_loop_card_set_info_status(card, "ST0 SET");
 }
 
-void rpm_loop_card_set_id_fail(RpmLoopCard *card, const char *reason) {
-    rpm_loop_card_set_last_status(card, "ID FAIL");
-    rpm_loop_card_set_info_status(card, reason ? reason : S_UNKNOWN);
-}
 
 void rpm_loop_card_set_no_measurement(RpmLoopCard *card,
                                       unsigned char seen_other) {
