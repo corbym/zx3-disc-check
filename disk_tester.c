@@ -366,7 +366,6 @@ static unsigned char track_loop_consume_action(unsigned char *track,
 
 void press_any_key(int interactive) {
     if (interactive == 1) {
-        printf("\nENTER/ESC\n");
         fflush(stdout);
         read_enter_blocking();
     }

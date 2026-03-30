@@ -453,15 +453,7 @@ void ui_render_text_screen(const char* title, const char* controls,
                            const char* result_label, const char* result_value) {
   ui_begin_text_screen(title, controls);
 
-  if (controls) {
-    char controls_buf[40];
-    snprintf(controls_buf, sizeof(controls_buf), "KEYS  : %s", controls);
-    ui_render_cached_text_row(1, controls_buf, UI_TEXT_ROW_STYLE_CONTROL);
-  } else {
-    ui_render_cached_text_row(1, "", UI_TEXT_ROW_STYLE_BLANK);
-  }
-
-  unsigned char row = 2;
+  unsigned char row = 1;
   for (unsigned char i = 0; i < line_count && row < 23U; i++, row++) {
     if (lines[i]) {
       ui_render_cached_text_row(row, lines[i], UI_TEXT_ROW_STYLE_TEXT);
@@ -480,9 +472,16 @@ void ui_render_text_screen(const char* title, const char* controls,
     row = (unsigned char)(row + 2U);
   }
 
-  while (row < 24U) {
+  while (row < 23U) {
     ui_render_cached_text_row(row, "", UI_TEXT_ROW_STYLE_BLANK);
     row++;
+  }
+
+  /* Render blue status bar at row 23 with KEYS info */
+  if (controls) {
+    ui_screen_write_row(23, controls, ZX_COLOUR_WHITE, ZX_COLOUR_BLUE, 1);
+  } else {
+    ui_screen_write_row(23, "", ZX_COLOUR_WHITE, ZX_COLOUR_BLUE, 1);
   }
 }
 

@@ -219,8 +219,8 @@ static void report_card_build_overall_row(char *out, unsigned char total,
              report_card_state_text(state));
 }
 
-/* Colouration for a single report-card row.  Screen row 2 = lines[0], so
- * slot i (base line 1+i) lands at screen row 3+i. */
+/* Colouration for a single report-card row.  lines[0] renders at screen row 1,
+ * so slot i (base line 1+i) lands at screen row 2+i. */
 static void report_card_colour_row(unsigned char screen_row, const char *text,
                                    ReportCardState state) {
     unsigned char col;
@@ -292,11 +292,11 @@ void report_card_render(ReportCard *card) {
                      report_card_result_text((ReportCardPhase) card->phase));
 
     /* Apply state-based colouration for every slot row.
-     * ui_render_text_screen places lines[0] at screen row 2, so slot i
-     * (base line 1+i) lands at screen row 3+i. */
+     * ui_render_text_screen places lines[0] at screen row 1, so slot i
+     * (base line 1+i) lands at screen row 2+i. */
     for (i = 0; i <= (unsigned char) REPORT_CARD_SLOT_OVERALL; i++) {
         report_card_colour_row(
-            (unsigned char) (3U + i),
+            (unsigned char) (2U + i),
             test_card_line(&card->base, (unsigned char) (1U + i)),
             (ReportCardState) card->slot_state[i]);
     }
@@ -308,7 +308,7 @@ void report_card_render(ReportCard *card) {
 
 void track_loop_card_init(TrackLoopCard *card) {
     test_card_init(&card->base, "READ TRACK DATA",
-                   "J/K TRK  F/V SCROLL  X EXIT", 5U);
+                   "K/J NAV F/V SCRL X EXIT", 5U);
     track_loop_card_set_last_status(card, "OK");
     track_loop_card_set_info_status(card, S_READY);
 }
@@ -393,7 +393,7 @@ void track_loop_card_render(const TrackLoopCard *card, TestCardResult result) {
 /* ----------------------------------------------------------------------- */
 
 void rpm_loop_card_init(RpmLoopCard *card) {
-    test_card_init(&card->base, "DISK RPM LOOP", "ENTER/X EXIT", 5U);
+    test_card_init(&card->base, "DISK RPM LOOP", "ESC/X EXIT", 5U);
     rpm_loop_card_set_last_status(card, S_WAITING);
     rpm_loop_card_set_info_status(card, S_READY);
 }
