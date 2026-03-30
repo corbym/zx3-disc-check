@@ -39,6 +39,9 @@
 
 extern unsigned char inportb(unsigned short port);
 
+/* Thin wrappers that keep the UI drive-status badge in sync */
+static void motor_on(void)  { motor_on();  ui_set_drive_motor(1); }
+static void motor_off(void) { motor_off(); ui_set_drive_motor(0); }
 
 #ifndef IOCTL_OTERM_PAUSE
 #define IOCTL_OTERM_PAUSE 0xC042
@@ -402,13 +405,14 @@ static void test_motor_and_drive_status(int interactive) {
         render_motor_drive(&motor_drive_card, TEST_CARD_RESULT_RUNNING);
     }
 
-    plus3_motor_on();
+    motor_on();
 
     have_st3 = cmd_sense_drive_status(FDC_DRIVE, 0, &status_3);
+    if (have_st3) ui_set_drive_st3(status_3);
     set_motor_drive_status(&motor_drive_card, have_st3, status_3);
     results.sense_drive_pass = have_st3 ? 1U : 0U;
 
-    plus3_motor_off();
+    motor_off();
     results.motor_test_pass = have_st3;
     last_test_failed = (unsigned char) (results.sense_drive_pass == 0);
     set_card_motor_off(&motor_drive_card);
@@ -417,7 +421,7 @@ static void test_motor_and_drive_status(int interactive) {
                        : TEST_CARD_RESULT_FAIL);
 }
 
-static void test_read_id_probe(const char interactive) {
+static void test_read_id_probe(int interactive) {
     unsigned char status_3 = 0;
     FdcSeekResult seek_result;
     unsigned char rid_ok = 0;
@@ -448,10 +452,11 @@ static void test_read_id_probe(const char interactive) {
         render_read_id_probe(&read_id_probe_card, TEST_CARD_RESULT_RUNNING);
     }
 
-    plus3_motor_on();
+    motor_on();
 
     /* 1) Raw drive lines (ST3), informational */
     have_st3 = cmd_sense_drive_status(FDC_DRIVE, 0, &status_3);
+    if (have_st3) ui_set_drive_st3(status_3);
     set_read_id_probe_status(&read_id_probe_card, have_st3, status_3);
 
     /* 2) A command that tends to surface "not ready" in ST0 (and steps hardware)
@@ -474,7 +479,7 @@ static void test_read_id_probe(const char interactive) {
      * hasn't executed yet.
      */
     last_test_failed = (unsigned char) (rid_ok == 0);
-    plus3_motor_off();
+    motor_off();
     if (rid_ok) {
         set_id_chrn(&read_id_probe_card,
                     rid_result.chrn.c,
@@ -522,7 +527,7 @@ static void test_recal_seek_track2(int interactive) {
         render_recal_seek(&recal_seek_card, TEST_CARD_RESULT_RUNNING);
     }
 
-    plus3_motor_on();
+    motor_on();
 
     if (!wait_drive_ready(FDC_DRIVE, 0, &st3)) {
         set_recal_seek_ready_fail_st3(&recal_seek_card, st3);
@@ -531,7 +536,7 @@ static void test_recal_seek_track2(int interactive) {
         set_detail_check_media(&recal_seek_card);
         results.recalibrate_pass = 0;
         results.seek_pass = 0;
-        plus3_motor_off();
+        motor_off();
         last_test_failed = 1;
         render_recal_seek(&recal_seek_card, TEST_CARD_RESULT_FAIL);
         return;
@@ -544,7 +549,7 @@ static void test_recal_seek_track2(int interactive) {
         results.recalibrate_pass = 0;
         results.seek_pass = 0;
         last_test_failed = 1;
-        plus3_motor_off();
+        motor_off();
         render_recal_seek(&recal_seek_card, TEST_CARD_RESULT_FAIL);
         return;
     }
@@ -555,7 +560,7 @@ static void test_recal_seek_track2(int interactive) {
         results.recalibrate_pass = 0;
         results.seek_pass = 0;
         last_test_failed = 1;
-        plus3_motor_off();
+        motor_off();
         render_recal_seek(&recal_seek_card, TEST_CARD_RESULT_FAIL);
         return;
     }
@@ -575,7 +580,7 @@ static void test_recal_seek_track2(int interactive) {
         results.recalibrate_pass = recal_ok;
         results.seek_pass = 0;
         last_test_failed = 1;
-        plus3_motor_off();
+        motor_off();
         render_recal_seek(&recal_seek_card, TEST_CARD_RESULT_FAIL);
         return;
     }
@@ -586,14 +591,14 @@ static void test_recal_seek_track2(int interactive) {
         results.recalibrate_pass = recal_ok;
         results.seek_pass = 0;
         last_test_failed = 1;
-        plus3_motor_off();
+        motor_off();
         render_recal_seek(&recal_seek_card, TEST_CARD_RESULT_FAIL);
         return;
     }
 
     results.recalibrate_pass = recal_ok;
     results.seek_pass = seek_completion_ok(seek_result.st0);
-    plus3_motor_off();
+    motor_off();
     /* Avoid && in ternary: SCCZ80 seems to miscompile or not evaluate correctly
      * in this context things like (a && b) ? X : Y
      * when a and b are struct members. Use explicit if-else instead. */
@@ -622,7 +627,7 @@ static void test_recal_seek_track2(int interactive) {
 }
 
 static void interactive_seek_fail(const InteractiveSeekCard *card) {
-    plus3_motor_off();
+    motor_off();
     last_test_failed = 1;
     render_interactive_seek(card, TEST_CARD_RESULT_FAIL);
 }
@@ -639,7 +644,7 @@ static void test_seek_interactive(void) {
     interactive_seek_card_init(&interactive_seek_card,
                                "K/J NAV Q EXIT");
 
-    plus3_motor_on();
+    motor_on();
 
     if (!wait_drive_ready(FDC_DRIVE, 0, &st3)) {
         set_interactive_seek_ready_fail_st3(&interactive_seek_card, st3);
@@ -672,7 +677,7 @@ static void test_seek_interactive(void) {
                     target = target < 39 ? target + 1 : 39;
                     break;
                 case 'Q':
-                    plus3_motor_off();
+                    motor_off();
                     set_interactive_seek_track(&interactive_seek_card, target);
                     set_last_st0(&interactive_seek_card, seek_result.st0);
                     set_pcn(&interactive_seek_card, seek_result.pcn);
@@ -721,12 +726,12 @@ static void test_read_id(int interactive) {
         render_read_id(&read_id_card, TEST_CARD_RESULT_RUNNING);
     }
 
-    plus3_motor_on();
+    motor_on();
 
     if (!wait_drive_ready(FDC_DRIVE, 0, &st3)) {
         set_drive_not_ready(&read_id_card, st3);
         results.read_id_pass = 0;
-        plus3_motor_off();
+        motor_off();
         last_test_failed = 1;
         render_read_id(&read_id_card, TEST_CARD_RESULT_FAIL);
         return;
@@ -739,7 +744,7 @@ static void test_read_id(int interactive) {
             set_detail_failure(&read_id_card, "RECAL FAIL");
             results.read_id_pass = 0;
             last_test_failed = 1;
-            plus3_motor_off();
+            motor_off();
             render_read_id(&read_id_card, TEST_CARD_RESULT_FAIL);
             return;
         }
@@ -763,7 +768,7 @@ static void test_read_id(int interactive) {
 
     results.read_id_pass = ok;
     last_test_failed = (unsigned char) (ok == 0);
-    plus3_motor_off();
+    motor_off();
     render_read_id(&read_id_card,
                    ok ? TEST_CARD_RESULT_PASS : TEST_CARD_RESULT_FAIL);
 }
@@ -947,7 +952,7 @@ static void test_read_track_data_loop(void) {
     disk_operations_set_idle_pump(pump_runtime_key_latch);
     ui_set_idle_pump(pump_runtime_key_latch);
 
-    plus3_motor_on();
+    motor_on();
 
     for (;;) {
         unsigned char seek_fail_st0 = 0;
@@ -1063,7 +1068,7 @@ track_retry_fail:
         continue;
     }
 
-    plus3_motor_off();
+    motor_off();
     disk_operations_set_idle_pump(0);
     ui_set_idle_pump(0);
     render_track_loop_stopped(current_track, pass_count, fail_count);
@@ -1086,7 +1091,7 @@ static void test_rpm_checker(void) {
 
     last_test_failed = 0;
 
-    plus3_motor_on();
+    motor_on();
     loop_start_tick = frame_ticks();
 
     while (!(rpm_exit_armed(loop_start_tick) && loop_exit_requested())) {
@@ -1176,7 +1181,7 @@ static void test_rpm_checker(void) {
     }
 
 rpm_done:
-    plus3_motor_off();
+    motor_off();
     render_rpm_loop_stopped(rpm, pass_count, fail_count);
     last_test_failed = (unsigned char)(fail_count > 0);
 }
@@ -1236,7 +1241,7 @@ int main(void) {
 #endif
 
     /* Initialize motor and paging to safe defaults. */
-    plus3_motor_off();
+    motor_off();
 
     memset(&results, 0, sizeof(results));
     reset_report_progress();
@@ -1325,7 +1330,7 @@ int main(void) {
                 menu_dirty = 1;
                 break;
             case 'Q':
-                plus3_motor_off();
+                motor_off();
                 printf("EXIT\n");
                 return 0;
             default:

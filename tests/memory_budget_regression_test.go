@@ -12,10 +12,12 @@ import (
 
 const (
 	// Keep this ceiling conservative; if this grows, re-check real memory headroom.
-	// Raised from 32000 → 32020 to accommodate '+' (0x2B) and '~' (0x7E)
-	// glyphs added to the headed compact font so that "ZX +3 DISK TESTER"
-	// renders completely and the '~' selection marker is OCR-readable.
-	maxCodeBinBytes = 32020
+	// Raised from 32020 → 32510 to accommodate the drive status badge added to
+	// the row-23 status bar (ui_render_row23 + badge state setters + motor
+	// wrappers).  The upcoming test consolidation (DRIVE PROBE, SEEK & READ DATA)
+	// will remove several full test-card functions and is expected to bring this
+	// well below 32020 again; tighten the ceiling at that point.
+	maxCodeBinBytes = 32510
 	// Heap/stack headroom floor derived from current known-good map with buffer.
 	minHeapToStackGapBytes = 0x0900
 )

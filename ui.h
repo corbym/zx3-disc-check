@@ -74,6 +74,16 @@ void ui_screen_put_char(unsigned char row, unsigned char col, char ch);
 void ui_reset_text_screen_cache(void);
 
 /*
+ * Drive status badge — always shown in the right 14 cols of row 23.
+ *
+ * ui_set_drive_motor: call from plus3_motor_on/off sites; on=1 when spinning.
+ * ui_set_drive_st3:   call after every cmd_sense_drive_status(); decodes
+ *                     READY (bit 5) and WPROT (bit 6) from the ST3 byte.
+ */
+void ui_set_drive_motor(unsigned char on);
+void ui_set_drive_st3(unsigned char st3);
+
+/*
  * Draw a labelled text screen with a title bar, controls line, body rows,
  * and a result line.  Uses a dirty-row cache so repeated calls with the
  * same content are near-zero cost.

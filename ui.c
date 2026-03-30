@@ -215,6 +215,25 @@ static unsigned char ui_text_screen_active;
 static const char* ui_text_screen_title;
 static const char* ui_text_screen_controls;
 
+/* ----------------------------------------------------------------------- */
+/* Drive status badge state                                                  */
+/* ----------------------------------------------------------------------- */
+
+static unsigned char s_badge_st3_valid = 0; /* 0 until first ST3 read     */
+static unsigned char s_badge_ready     = 0; /* ST3 bit 5                  */
+static unsigned char s_badge_wprot     = 0; /* ST3 bit 6                  */
+static unsigned char s_badge_motor_on  = 0; /* updated by motor_on/off    */
+
+void ui_set_drive_motor(unsigned char on) {
+    s_badge_motor_on = on;
+}
+
+void ui_set_drive_st3(unsigned char st3) {
+    s_badge_ready     = (unsigned char)((st3 & 0x20U) ? 1U : 0U);
+    s_badge_wprot     = (unsigned char)((st3 & 0x40U) ? 1U : 0U);
+    s_badge_st3_valid = 1;
+}
+
 
 /*
  * Per-row dirty cache.  ui_row_tag combines a text checksum with the row
@@ -406,6 +425,52 @@ static void ui_render_cached_text_row(unsigned char row, const char* text,
   ui_row_tag[row] = tag;
 }
 
+/*
+ * Write row 23 as a 32-char composite: controls text (cols 0-17) followed
+ * by the drive status badge (cols 18-31).  Writes one full row then applies
+ * per-field colour overrides for the badge.
+ *
+ * Badge layout (14 cols, 18-31):
+ *   col 18:     separator space
+ *   cols 19-21: R:Y/R:N/R:?   cyan=ready, yellow=not ready
+ *   col 22:     space
+ *   cols 23-25: W:Y/W:N/W:?   yellow=protected, cyan=ok
+ *   col 26:     space
+ *   cols 27-31: M:ON_ / M:OFF  cyan=on, dim=off
+ */
+static void ui_render_row23(const char *controls) {
+    char buf[33];
+    unsigned char i;
+
+    memset(buf, ' ', 32);
+    buf[32] = '\0';
+
+    if (controls) {
+        for (i = 0; i < 18U && controls[i]; i++) buf[i] = controls[i];
+    }
+
+    /* badge chars — positions are fixed regardless of ST3 validity */
+    buf[19] = 'R'; buf[20] = ':';
+    buf[21] = s_badge_st3_valid ? (s_badge_ready ? 'Y' : 'N') : '?';
+    buf[23] = 'W'; buf[24] = ':';
+    buf[25] = s_badge_st3_valid ? (s_badge_wprot ? 'Y' : 'N') : '?';
+    buf[27] = 'M'; buf[28] = ':'; buf[29] = 'O';
+    if (s_badge_motor_on) { buf[30] = 'N'; buf[31] = ' '; }
+    else                  { buf[30] = 'F'; buf[31] = 'F'; }
+
+    ui_screen_write_row(23, buf, ZX_COLOUR_WHITE, ZX_COLOUR_BLUE, 1);
+
+    /* per-field colour overrides */
+    if (s_badge_st3_valid) {
+        ui_attr_set_run(23, 19, 3, ZX_COLOUR_WHITE,
+                        s_badge_ready ? ZX_COLOUR_CYAN : ZX_COLOUR_YELLOW, 1);
+        ui_attr_set_run(23, 23, 3, ZX_COLOUR_WHITE,
+                        s_badge_wprot ? ZX_COLOUR_YELLOW : ZX_COLOUR_CYAN, 1);
+    }
+    ui_attr_set_run(23, 27, 5, ZX_COLOUR_WHITE,
+                    s_badge_motor_on ? ZX_COLOUR_CYAN : ZX_COLOUR_BLUE, 1);
+}
+
 static void ui_begin_text_screen(const char* title, const char* controls) {
   unsigned char col;
   static const unsigned char STRIPE_PAPER[8] = {0, 1, 2, 3, 4, 5, 6, 7};
@@ -477,12 +542,8 @@ void ui_render_text_screen(const char* title, const char* controls,
     row++;
   }
 
-  /* Render blue status bar at row 23 with KEYS info */
-  if (controls) {
-    ui_screen_write_row(23, controls, ZX_COLOUR_WHITE, ZX_COLOUR_BLUE, 1);
-  } else {
-    ui_screen_write_row(23, "", ZX_COLOUR_WHITE, ZX_COLOUR_BLUE, 1);
-  }
+  /* Render blue status bar at row 23 with drive status badge */
+  ui_render_row23(controls);
 }
 
 /* ----------------------------------------------------------------------- */
