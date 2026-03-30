@@ -40,8 +40,8 @@
 extern unsigned char inportb(unsigned short port);
 
 /* Thin wrappers that keep the UI drive-status badge in sync */
-static void motor_on(void)  { motor_on();  ui_set_drive_motor(1); }
-static void motor_off(void) { motor_off(); ui_set_drive_motor(0); }
+static void motor_on(void)  { plus3_motor_on();  ui_set_drive_motor(1); }
+static void motor_off(void) { plus3_motor_off(); ui_set_drive_motor(0); }
 
 #ifndef IOCTL_OTERM_PAUSE
 #define IOCTL_OTERM_PAUSE 0xC042
