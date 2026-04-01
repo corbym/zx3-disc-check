@@ -439,9 +439,10 @@ static void test_drive_probe(int interactive) {
     }
 }
 
-/* Fixed seek pattern: 0 → 39 → 0 → 79 → 0 (tests full travel both ways) */
+/* Fixed seek pattern: 0 → 19 → 0 → 39 → 0 (tests half then full travel both ways).
+ * The +3 DSK image only has 40 tracks (0-39), so we don't seek beyond 39. */
 #define SEEK_PATTERN_LEN 5U
-static const unsigned char seek_pattern[SEEK_PATTERN_LEN] = {0U, 39U, 0U, 79U, 0U};
+static const unsigned char seek_pattern[SEEK_PATTERN_LEN] = {0U, 19U, 0U, 39U, 0U};
 
 static void test_seek_and_read(int interactive) {
     static unsigned char sector_data[1024];
